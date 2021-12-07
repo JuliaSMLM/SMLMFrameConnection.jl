@@ -1,0 +1,13 @@
+name = "SMLMFrameConnection"
+uuid = "1517b1a9-81e8-461f-b994-92eb29599690"
+authors = ["klidke@unm.edu"]
+version = "0.1.0"
+
+[compat]
+julia = "1.6"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
