@@ -18,9 +18,6 @@ function compress_connectID!(connectID::Vector{Int64})
         clusterind = (1:nperID[nn]) .+ ncumulative[nn]
         connectID_sorted[clusterind] .= nn
     end
-    println(sortindices)
-    println(connectID_sorted)
-    println(connectID)
     connectID[sortindices] = deepcopy(connectID_sorted)
 
     return connectID
