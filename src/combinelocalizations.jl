@@ -21,13 +21,15 @@ function combinelocalizations(smld::SMLMData.SMLD2D)
     σ_x = smld.σ_x[sortindices]
     σ_y = smld.σ_y[sortindices]
     photons = smld.photons[sortindices]
+    σ_photons = smld.σ_photons[sortindices]
     bg = smld.bg[sortindices]
+    σ_bg = smld.σ_bg[sortindices]
     framenum = smld.framenum[sortindices]
     datasetnum = smld.datasetnum[sortindices]
 
     # Loop over clusters and combine their localization data as appropriate.
     nperID = counts(connectID)
-    nperID = nperID[nperID .!= 0]
+    nperID = nperID[nperID.!=0]
     ncumulative = [0; cumsum(nperID)]
     nclusters = length(nperID)
     smld_combined = deepcopy(smld)
@@ -39,7 +41,9 @@ function combinelocalizations(smld::SMLMData.SMLD2D)
         smld_combined.σ_x[nn] = sqrt(1.0 / sum(1.0 ./ σ_x[indices] .^ 2))
         smld_combined.σ_y[nn] = sqrt(1.0 / sum(1.0 ./ σ_y[indices] .^ 2))
         smld_combined.photons[nn] = sum(photons[indices])
+        smld_combined.σ_photons[nn] = sqrt(sum(σ_photons[indices] .^ 2))
         smld_combined.bg[nn] = sum(bg[indices])
+        smld_combined.σ_bg[nn] = sqrt(sum(σ_bg[indices] .^ 2))
         smld_combined.connectID[nn] = connectID[indices[1]]
         smld_combined.framenum[nn] = framenum[indices[1]]
         smld_combined.datasetnum[nn] = datasetnum[indices[1]]
