@@ -26,7 +26,7 @@ framerate = 1.0 # I want units of frames, so setting to 1.0
 smld_model = SMLMSim.kineticmodel(smld_true, fluor, nframes, framerate; ndatasets = 1)
 smld_model.datasize = [ysize; xsize] # not populated by SMLMSim
 
-# Make noisy coordinates.
+# Make noisy coordinates from the kinetic model.
 σ_psf = 1.3 # st. dev. of Gaussian PSF, pixels
 smld_noisy = SMLMSim.noise(smld_model, σ_psf)
 smld_noisy.bg = zeros(Float64, length(smld_noisy.framenum)) # not populated in SMLMSim
@@ -36,14 +36,13 @@ smld_noisy.datasize = [ysize; xsize] # not populated by SMLMSim
 
 # Perform frame connection.
 params = SMLMFrameConnection.ParamStruct()
-smld_combined, smld_connected, smld_preclustered = SMLMFrameConnection.frameconnect(smld_noisy)
+smld_connected, smld_preclustered, smld_combined = SMLMFrameConnection.frameconnect(smld_noisy)
 
-## Make some plots of the results.
-# Plot the combined results overlain with the original data.
+## Make some circle images of the results (circle radii indicate localization 
+## precision).
+# Plot the combined results overlain with the original data:
+#   Original data shown in magenta, combined results in green.
 mag = 50.0 # image magnification
 circleim_original = SMLMData.makecircleim(smld_noisy, mag)
 circleim_combined = SMLMData.makecircleim(smld_combined, mag)
-smld_gt = SMLMFrameConnection.combinelocalizations(smld_noisy)
-circleim_gt = SMLMData.makecircleim(smld_gt, mag)
 ImageView.imshow(ImageView.RGB.(circleim_original, circleim_combined, circleim_original))
-ImageView.imshow(ImageView.RGB.(circleim_gt, circleim_combined, circleim_gt))
