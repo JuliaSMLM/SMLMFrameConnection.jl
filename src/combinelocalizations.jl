@@ -29,12 +29,11 @@ function combinelocalizations(smld::SMLMData.SMLD2D)
 
     # Loop over clusters and combine their localization data as appropriate.
     nperID = counts(connectID)
-    nperID = nperID[nperID.!=0]
+    nperID = nperID[nperID .!= 0]
     ncumulative = [0; cumsum(nperID)]
     nclusters = length(nperID)
     smld_combined = deepcopy(smld)
-    loopinds = (1:nclusters)[nperID .> 1]
-    for nn in loopinds
+    for nn in 1:nclusters
         indices = (1:nperID[nn]) .+ ncumulative[nn]
         smld_combined.x[nn] = StatsBase.mean(x[indices], weights(1.0 / σ_x[indices] .^ 2))
         smld_combined.y[nn] = StatsBase.mean(y[indices], weights(1.0 / σ_y[indices] .^ 2))

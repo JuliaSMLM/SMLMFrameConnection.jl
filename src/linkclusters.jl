@@ -17,7 +17,7 @@ function linkclusters!(connectID::Vector{Int64}, maxconnectID::Int64,
     # NOTE: The cost matrix organization means that the last `nlocalizations`
     #       entries of assignment don't require changes in `connectID`.
     connectID_current = connectID[updateind]
-    connectID_copy = copy(connectID_current)
+    connectID_copy = deepcopy(connectID_current)
     for nn = 1:nlocalizations
         # If this is a cluster "birth", no action is needed.
         if assignment[nn] > nlocalizations
