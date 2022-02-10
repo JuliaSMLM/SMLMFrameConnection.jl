@@ -7,6 +7,7 @@ using Optim
 using StatsBase
 using Statistics
 
+
 include("structdefinitions.jl")
 include("precluster.jl")
 include("organizeclusters.jl")
