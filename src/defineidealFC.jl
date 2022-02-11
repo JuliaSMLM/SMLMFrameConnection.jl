@@ -29,16 +29,17 @@ function defineidealFC(smld::SMLMData.SMLD2D; maxframegap::Int = 5)
 
         # If all of these localizations are within the framegap, no action is
         # needed (they already share the same connectID).
-        if all(diff(sortedframes) .<= maxframegap)
+        framediff = diff(sortedframes)
+        if all(framediff .<= maxframegap)
             continue
         end
 
         # Determine which localizations we can combine.
-        for ff = 1:(length(sortedframes)-1)
-            if (sortedframes[ff+1]-sortedframes[ff]) <= maxframegap
+        for ff = 1:length(framediff)
+            if framediff[ff] <= maxframegap
                 # Connect these localizations.
-                smld_connected.connectID[sorted_currentinds[[ff; ff+1]]] .= 
-                    minimum(smld_connected.connectID[sorted_currentinds[[ff; ff+1]]])
+                smld_connected.connectID[sorted_currentinds[ff + 1]] =
+                    smld_connected.connectID[sorted_currentinds[ff]]
             else
                 # Localization ff+1 should be a new blinking event.
                 maxID += 1
