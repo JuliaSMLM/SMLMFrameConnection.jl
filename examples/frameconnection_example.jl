@@ -5,6 +5,7 @@ using SMLMSim
 using SMLMData
 using ImageView
 
+
 ## Simulate some data using SMLMSim.
 # Define fluorophore kinetics. 
 γ = 1e3 # emission rate, photons/frame
@@ -36,8 +37,9 @@ smld_noisy.σ_photons = fill(Inf64, length(smld_noisy.framenum))
 smld_noisy.datasize = [ysize; xsize] # not populated by SMLMSim
 
 # Perform frame connection.
-params = SMLMFrameConnection.ParamStruct()
-smld_connected, smld_preclustered, smld_combined, params = SMLMFrameConnection.frameconnect(smld_noisy)
+smld_connected, smld_preclustered, smld_combined, params = SMLMFrameConnection.frameconnect(smld_noisy;
+    nnearestclusters = 2, nsigmadev = 5.0,
+    maxframegap = 5, nmaxnn = 2)
 
 ## Make some circle images of the results (circle radii indicate localization 
 ## precision).
