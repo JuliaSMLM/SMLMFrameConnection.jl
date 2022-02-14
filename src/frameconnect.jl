@@ -113,7 +113,7 @@ using their MLE position estimate assuming Gaussian noise.
            calculated internally (see SMLMFrameConnection.ParamStruct).
 """
 function frameconnect(smld::SMLMData.SMLD2D;
-    nnearestclusters::Int = 2, nsigmadev::Float64 = 5,
+    nnearestclusters::Int = 2, nsigmadev::Float64 = 5.0,
     maxframegap::Int = 5, nmaxnn::Int = 2)
 
     return frameconnect!(deepcopy(smld);
