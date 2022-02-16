@@ -37,6 +37,7 @@ function precluster(smld::SMLMData.SMLD2D, params::ParamStruct = ParamStruct())
     # Isolate some parameters from params.
     maxframegap = params.maxframegap
     nsigmadev = params.nsigmadev
+    nmaxnn = params.nmaxnn
 
     # Initialize a connectID array, with each localization being considered
     # a unique cluster.
@@ -44,12 +45,11 @@ function precluster(smld::SMLMData.SMLD2D, params::ParamStruct = ParamStruct())
     connectID = collect(1:nlocalizations)
 
     # Loop through frames and add localizations to clusters.
-    nperdataset = counts(datasetnum)
+    nperdataset = StatsBase.counts(datasetnum)
     nperdataset = nperdataset[nperdataset.!=0]
     ncumulativeDS = [0; cumsum(nperdataset)]
-    datasets = unique(datasetnum)
     maxID = nlocalizations
-    for nn = 1:length(datasets)
+    for nn = 1:length(unique(datasetnum))
         # Isolate some arrays for the nn-th dataset and sort w.r.t. their 
         # framenum.
         currentindDS = (1:nperdataset[nn]) .+ ncumulativeDS[nn]
@@ -64,13 +64,13 @@ function precluster(smld::SMLMData.SMLD2D, params::ParamStruct = ParamStruct())
         nperframe = counts(framenumCDS)
         nperframe = nperframe[nperframe.!=0]
         ncumulativeFN = [0; cumsum(nperframe)]
-        frames = unique(framenumCDS)
         clusterinds = [[ind] for ind in 1:nperdataset[nn]]
+        frames = unique(framenumCDS)
         for ff = 1:length(frames)
             # Determine which localizations should be considered for
             # clustering.
             currentindFN = (1:nperframe[ff]) .+ ncumulativeFN[ff]
-            candidateind = findall((framenumCDS .>= (frames[ff].-maxframegap)) .& 
+            candidateind = findall((framenumCDS .>= (frames[ff] .- maxframegap)) .&
                                    (framenumCDS .<= frames[ff]))
             if length(candidateind) < 2
                 maxID += 1
@@ -81,9 +81,9 @@ function precluster(smld::SMLMData.SMLD2D, params::ParamStruct = ParamStruct())
 
             # Find the nearest-neighbor to the current localizations
             # which is a candidate for clustering.
-            kdtree = KDTree(xyCDS[:, candidateind])
-            nnindices, nndist = knn(kdtree, xyCDS[:, currentindFN],
-                min(params.nmaxnn + 1, length(candidateind)), true)
+            kdtree = NearestNeighbors.KDTree(xyCDS[:, candidateind])
+            nnindices, nndist = NearestNeighbors.knn(kdtree, xyCDS[:, currentindFN],
+                min(nmaxnn + 1, length(candidateind)), true)
 
             # Assign localizations to clusters based on `nndist`.
             for ii in 1:nperframe[ff]
@@ -99,18 +99,21 @@ function precluster(smld::SMLMData.SMLD2D, params::ParamStruct = ParamStruct())
                     clusterinds[candidateind[validnninds]][1]])
                 connectIDCDS[updateinds] .= minimum(connectIDCDS[updateinds])
 
+                # Keep track of which indices have been associated.
                 for jj in updateinds
-                    clusterinds[jj] = [clusterinds[jj]; updateinds]
+                    clusterinds[jj] = [clusterinds[jj][1]; updateinds]
                 end
             end
         end
-        connectID[currentindDS] = connectIDCDS
+        connectID[currentindDS] = deepcopy(connectIDCDS)
     end
 
     # Store the updated connectID in the output structure, ensuring that the
     # values range from 1:NClusters (which is expected by later codes).
     smld_preclustered = deepcopy(smld)
-    smld_preclustered.connectID = compress_connectID(connectID[sortindicesDS])
+    smld_preclustered.connectID = 
+        Vector{Int}(undef, length(smld_preclustered.framenum))
+    smld_preclustered.connectID[sortindicesDS] = compress_connectID(connectID)
 
     return smld_preclustered
 end
