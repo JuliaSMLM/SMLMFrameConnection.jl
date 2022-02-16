@@ -12,10 +12,10 @@ dataset.  The user should probably not bother using this, and instead should
 call defineidealFC().
 
 # Inputs
--`smld`: SMLMData.SMLD2D with smld.connectID populated to indicate emitter ID.
--`dataset`: Dataset number to be connected.
--`maxframegap`: Maximum frame gap allowed between localizations connected in
-                the "ideal" result.
+- `smld`: SMLMData.SMLD2D with smld.connectID populated to indicate emitter ID.
+- `dataset`: Dataset number to be connected.
+- `maxframegap`: Maximum frame gap allowed between localizations connected in
+                 the "ideal" result.
 """
 function connect1DS!(smld::SMLMData.SMLD2D, dataset::Int; maxframegap::Int = 5)
     # Loop through associated localizations and combine them as appropriate.

@@ -15,29 +15,29 @@ localizations in each pre-cluster, and 4) combining the connected localizations
 using their MLE position estimate assuming Gaussian noise.
 
 # Inputs
--`smld`: SMLD2D structure containing the localizations that should be 
-         connected (see SMLMData.SMLD2D for organization/fields).
--`nnearestclusters`: Number of nearest preclusters used for local density 
-                     estimates. (default = 2)(see estimatedensities())
--`nsigmadev`: Multiplier of localization errors that defines a pre-clustering
-              distance threshold. (default = 5)(see precluster())(pixels)
--`maxframegap`: Maximum frame gap between temporally adjacent localizations in
-                a precluster. (default = 5)(see precluster())(frames)
--`nmaxnn`: Maximum number of nearest-neighbors inspected for precluster 
-           membership.  Ideally, this would be set to inf, but that's not
-           feasible for most data. (default = 2)(see precluster())
+- `smld`: SMLD2D structure containing the localizations that should be 
+          connected (see SMLMData.SMLD2D for organization/fields).
+- `nnearestclusters`: Number of nearest preclusters used for local density 
+                      estimates. (default = 2)(see estimatedensities())
+- `nsigmadev`: Multiplier of localization errors that defines a pre-clustering
+               distance threshold. (default = 5)(see precluster())(pixels)
+- `maxframegap`: Maximum frame gap between temporally adjacent localizations in
+                 a precluster. (default = 5)(see precluster())(frames)
+- `nmaxnn`: Maximum number of nearest-neighbors inspected for precluster 
+            membership.  Ideally, this would be set to inf, but that's not
+            feasible for most data. (default = 2)(see precluster())
 
 # Outputs
--`smld`: Input `smld` with field connectID updated to reflect connected
-         localizations (however localizations remain uncombined).
--`smld_preclustered`: Copy of the input `smld` with the field connectID
-                      populated to reflect the results of pre-clustering.
--`smld_combined`: Final frame-connection result (i.e., `smld` with 
-                  localizations that seem to be from the same blinking event
-                  combined into higher precision localizations).
--`params`: Structure of parameters used in the algorithm, with some copied 
-           directly from the option kwargs to this function, and others 
-           calculated internally (see SMLMFrameConnection.ParamStruct).
+- `smld`: Input `smld` with field connectID updated to reflect connected
+          localizations (however localizations remain uncombined).
+- `smld_preclustered`: Copy of the input `smld` with the field connectID
+                       populated to reflect the results of pre-clustering.
+- `smld_combined`: Final frame-connection result (i.e., `smld` with 
+                   localizations that seem to be from the same blinking event
+                   combined into higher precision localizations).
+- `params`: Structure of parameters used in the algorithm, with some copied 
+            directly from the option kwargs to this function, and others 
+            calculated internally (see SMLMFrameConnection.ParamStruct).
 """
 function frameconnect!(smld::SMLMData.SMLD2D;
     nnearestclusters::Int = 2, nsigmadev::Float64 = 5.0,
