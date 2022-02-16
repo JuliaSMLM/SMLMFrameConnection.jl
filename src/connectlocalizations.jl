@@ -27,12 +27,14 @@ function connectlocalizations!(connectID::Vector{Int64},
         assignment = solveLAP(costmatrix)
 
         # Update `connectID` to reflect the LAP solution.
-        maxconnectID = linkclusters!(connectID, maxconnectID,
+        _, maxconnectID = linkclusters!(connectID, maxconnectID,
             Int64.(clusterdata[nn][:, 8]), assignment[1])
     end
 
     # Ensure `connectID` is contains the set of integers 1:nclusters.
     compress_connectID!(connectID)
+
+    return connectID
 end
 
 """

@@ -55,7 +55,7 @@ function estimateparams(smld::SMLMData.SMLD2D,
     x1_guess = (x1_guess>lowerbound[1]) & (x1_guess<upperbound[1]) ?
                x1_guess : (upperbound[1]-lowerbound[1]) / 2.0
     initialguess = [x1_guess 1.0 / frames[end]]
-    inner_optimizer = NelderMead()
+    inner_optimizer = GradientDescent()
     optimresults = optimize(costfunction, lowerbound, upperbound, initialguess,
         Fminbox(inner_optimizer))
     xhat = optimresults.minimizer

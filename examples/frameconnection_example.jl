@@ -2,58 +2,64 @@
 
 using SMLMFrameConnection
 using SMLMSim
-using PlotlyJS
+using SMLMData
+using ImageView
+
 
 ## Simulate some data using SMLMSim.
-# Define fluorophore kinetics. 
+# Define simulation parameters.
+# NOTE: Care must be taken to maintain unit conventions - SMLMSim works in
+#       physical units, but here we're maintaining units of pixels and frames.
 γ = 1e3 # emission rate, photons/frame
-q = [1.0-0.7 0.5 0.2
-    5.0e-3 1.0-5.0e-3 0.0
-    0.0 0.0 1.0] # kinetic transmissions (1/frame): [on->on, on->off, on->bleach; off->on, off->off, off->bleach; bleach->on, bleach->off, bleach->bleach]
-fluor = SMLMSim.GenericFluor(γ, q)
-
-# Define our pattern.
+q = [0.0 0.5
+    1.0e-3 0.0] # kinetic transmissions (1/frame): [on->on, on->off; off->on, off->off]
+fluor = SMLMSim.GenericFluor(; γ = γ, q = q)
 pattern = SMLMSim.Point2D()
-ρ = 10.0 # emitters / pixel^2
-xsize = 32.0 # pixels
-ysize = 32.0
-smld_true = SMLMSim.uniform2D(ρ, pattern, xsize, ysize)
-smld_true.datasize = [ysize; xsize] # not populated by SMLMSim
+ρ = 5.0 # emitters / pixel^2
+xsize = 8 # pixels
+ysize = 8
+pixelsize = 1.0 # 1.0 to keep units of pixels
+framerate = 1.0 # 1.0 to keep units of frames
+nframes = 10000
+ndatasets = 1 # for now, must be 1 due to unresolved bug in defineidealFC()
 
-# Simulate fluorophore kinetics.
-nframes = 2000
-framerate = 1.0 # I want units of frames, so setting to 1.0
-smld_model = SMLMSim.kineticmodel(smld_true, fluor, nframes, framerate; ndatasets = 1)
+# Generate the simulation
+smld_true, smld_model, smld_noisy = SMLMSim.sim(;
+    ρ = ρ,
+    σ_PSF = 1.3,
+    minphotons = 50,
+    ndatasets = ndatasets,
+    nframes = nframes,
+    framerate = framerate,
+    pattern = pattern,
+    molecule = fluor,
+    camera = SMLMSim.IdealCamera(; xpixels = xsize, ypixels = ysize, pixelsize = pixelsize)
+)
 
-# Make noisy coordinates.
-σ_psf = 1.3 # st. dev. of Gaussian PSF, pixels
-smld_noisy = SMLMSim.noise(smld_model, σ_psf)
-smld_noisy.bg = zeros(Float64, length(smld_noisy.framenum)) # not populated in SMLMSim
+# Populate some missing fields not added during the simulation.
+smld_noisy.bg = zeros(Float64, length(smld_noisy.framenum))
+smld_noisy.σ_bg = fill(Inf64, length(smld_noisy.framenum))
+smld_noisy.σ_photons = fill(Inf64, length(smld_noisy.framenum))
 
 # Perform frame connection.
-params = SMLMFrameConnection.ParamStruct()
-smld_combined, smld, smld_preclustered = SMLMFrameConnection.frameconnect(smld_noisy)
+smld_connected, smld_preclustered, smld_combined, params = SMLMFrameConnection.frameconnect(smld_noisy;
+    nnearestclusters = 2, nsigmadev = 5.0,
+    maxframegap = 5, nmaxnn = 2)
 
-# # Load some data and store it in an smd struct|ure.
-# filename = "C:\\Users\\David\\Documents\\work_stuff\\frame_connection\\actin_data.csv"
-# # filename = "C:\\Users\\David\\Documents\\work_stuff\\frame_connection\\uniform_rho10.csv"
+## Make some circle images of the results (circle radii indicate localization 
+## precision).
+# Plot the combined results overlain with the original data:
+#   Original data shown in magenta, combined results in green.
+mag = 100.0 # image magnification
+circleim_original = SMLMData.makecircleim(smld_noisy, mag)
+circleim_combined = SMLMData.makecircleim(smld_combined, mag)
+ImageView.imshow(ImageView.RGB.(circleim_original, circleim_combined, circleim_original))
 
-# data = DataFrames.DataFrame(CSV.File(filename))
-# smd = FrameConnection.SMD(data)
-
-# # Perform frame connection.
-# params = FrameConnection.ParamStruct()
-# smd_combined, smd, smd_preclustered = FrameConnection.frameconnect(smd)
-
-# # Make some images.
-# using SMLMData
-# using Images
-# using ImageView
-
-# circleim_in = SMLMData.makecircleim(Float64.([smd.y smd.x]), Float64.(vec(mean([smd.y_se smd.x_se], dims = 2))), [128; 128])
-# circleim_out = SMLMData.makecircleim(Float64.([smd_combined.y smd_combined.x]),
-#     Float64.(vec(mean([smd_combined.y_se smd_combined.x_se], dims = 2))), [128; 128])
-# circleim_in ./= maximum(circleim_in)
-# circleim_out ./= maximum(circleim_out)
-# testim = Images.RGB.(circleim_in, circleim_out, circleim_in)
-# ImageView.imshow(testim)
+# Plot the "ideal" result (all localizations of same emitter w/in 5 frames are
+# combined) overlain with the LAP-FC result:
+#   Ideal result shown in magenta, LAP-FC results in green
+#   -> white circles indicate "ideal" performance of LAP-FC
+smld_idealconnected, smld_idealcombined =
+    SMLMFrameConnection.defineidealFC(smld_noisy; maxframegap = 5)
+circleim_ideal = SMLMData.makecircleim(smld_idealcombined, mag)
+ImageView.imshow(ImageView.RGB.(circleim_ideal, circleim_combined, circleim_ideal))

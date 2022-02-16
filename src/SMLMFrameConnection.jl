@@ -7,8 +7,10 @@ using Optim
 using StatsBase
 using Statistics
 
+
 include("structdefinitions.jl")
 include("precluster.jl")
+include("defineidealFC.jl")
 include("organizeclusters.jl")
 include("computeclusterinfo.jl")
 include("estimateparams.jl")

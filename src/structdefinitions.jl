@@ -1,9 +1,9 @@
 # This file defines some struct types used in the FrameConnection package.
 
 """
-    ParamStruct(initialdensity::Vector{Float32}, 
-        k_on::Float32, k_off::Float32, k_bleach::Float32, p_miss::Float32, 
-        nsigmadev::Float32, maxframegap::Int, nnearestclusters::Int)
+    ParamStruct(initialdensity::Vector{Float64}, 
+        k_on::Float64, k_off::Float64, k_bleach::Float64, p_miss::Float64, 
+        nsigmadev::Float64, maxframegap::Int, nnearestclusters::Int)
 
 Structure of parameters needed for frame-connection.
 
@@ -30,14 +30,14 @@ Structure of parameters needed for frame-connection.
 
 """
 mutable struct ParamStruct
-    initialdensity::Vector{Float32}
+    initialdensity::Vector{Float64}
     nnearestclusters::Int
-    k_on::Float32
-    k_off::Float32
-    k_bleach::Float32
-    p_miss::Float32
-    nsigmadev::Float32
+    k_on::Float64
+    k_off::Float64
+    k_bleach::Float64
+    p_miss::Float64
+    nsigmadev::Float64
     maxframegap::Int
     nmaxnn::Int
 end
-ParamStruct() = ParamStruct([], 2, 0, 0, 0, 0, 5, 5, 2)
+ParamStruct() = ParamStruct([], 2, 0.0, 0.0, 0.0, 0.0, 5.0, 5, 2)
