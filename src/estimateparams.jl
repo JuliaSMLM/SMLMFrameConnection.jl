@@ -51,7 +51,7 @@ function estimateparams(smld::SMLMData.SMLD2D,
     costfunction(x) = Statistics.mean((nloccumulative .- model(x)) .^ 2)
     lowerbound = [maximum(nlocperframe) 10^-5]
     upperbound = [nclusters nloccumulative[end] / frames[end]]
-    x1_guess = ceil(nclusters * k_bleach)
+    x1_guess = ceil(nclusters * k_bleach / (k_off*(1.0-p_miss))) # DJS 22/06/23: better guess than suggested in paper
     x1_guess = (x1_guess>lowerbound[1]) & (x1_guess<upperbound[1]) ?
                x1_guess : (upperbound[1]-lowerbound[1]) / 2.0
     initialguess = [x1_guess 1.0 / frames[end]]
