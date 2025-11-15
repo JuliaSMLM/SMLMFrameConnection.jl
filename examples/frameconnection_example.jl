@@ -36,17 +36,16 @@ smld_true, smld_model, smld_noisy = SMLMSim.sim(;
     camera = SMLMSim.IdealCamera(; xpixels = xsize, ypixels = ysize, pixelsize = pixelsize)
 )
 
-# Populate some missing fields not added during the simulation.
-smld_noisy.bg = zeros(Float64, length(smld_noisy.framenum))
-smld_noisy.σ_bg = fill(Inf64, length(smld_noisy.framenum))
-smld_noisy.σ_photons = fill(Inf64, length(smld_noisy.framenum))
+# Note: With SMLMData 0.4+, emitter fields are accessed via the emitters vector.
+# If SMLMSim returns an older format, you may need to convert or wait for SMLMSim updates.
+# For this example, we assume SMLMSim is compatible with SMLMData 0.4.
 
 # Perform frame connection.
 smld_connected, smld_preclustered, smld_combined, params = SMLMFrameConnection.frameconnect(smld_noisy;
     nnearestclusters = 2, nsigmadev = 5.0,
     maxframegap = 5, nmaxnn = 2)
 
-## Make some circle images of the results (circle radii indicate localization 
+## Make some circle images of the results (circle radii indicate localization
 ## precision).
 # Plot the combined results overlain with the original data:
 #   Original data shown in magenta, combined results in green.
