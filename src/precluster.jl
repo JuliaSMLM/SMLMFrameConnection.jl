@@ -1,119 +1,149 @@
-using SMLMData
-using Statistics
 using NearestNeighbors
+using Statistics
+using StatsBase
 
 """
-    smld_preclustered = precluster(smld::SMLMData.SMLD2D, 
-        params::ParamStruct = ParamStruct())
+    precluster(smld::BasicSMLD, params::ParamStruct = ParamStruct())
 
-Cluster localizations in `smld` based on distance and time thresholds in `params`.
+Cluster localizations in `smld` based on spatiotemporal proximity thresholds.
 
 # Description
-Localizations in the input structure `smd` are clustered together based on
-their spatiotemporal separations.  All localizations within a spatial 
-threshold of `params.nsigmadev*mean([smld.σ_x smld.σ_y)` and a temporal 
-threshold of `params.maxframegap` of one another will be clustered together,
-meaning that these localizations now share the same unique integer value for
-smld.connectID.
+Localizations are clustered together based on their spatiotemporal separations.
+All localizations within a spatial threshold of `params.nsigmadev * mean([σ_x, σ_y])`
+and a temporal threshold of `params.maxframegap` frames from one another will be
+clustered together, meaning they share the same unique `track_id` value.
 
 # Notes
-Pre-clustering allows localizations observed in the same frame to be in the
-same cluster.  This is done to prevent exclusion of the "correct" localization
-from its ideal cluster due to a previously included "incorrect" localization
-into that cluster.
-"""
-function precluster(smld::SMLMData.SMLD2D, params::ParamStruct = ParamStruct())
-    # Make a copy of smld, grab some of its fields (to improve speed), and
-    # sort w.r.t. framenum.
-    sortindicesDS = sortperm(smld.datasetnum)
-    framenum = smld.framenum[sortindicesDS]
-    datasetnum = smld.datasetnum[sortindicesDS]
-    xy = transpose([smld.x smld.y])
-    xy = xy[:, sortindicesDS]
-    σ_x = smld.σ_x[sortindicesDS]
-    σ_y = smld.σ_y[sortindicesDS]
-    mean_se = Statistics.mean([σ_x σ_y]; dims = 2)
+Pre-clustering allows localizations observed in the same frame to be in the same
+cluster. This prevents exclusion of the "correct" localization from its ideal
+cluster due to a previously included "incorrect" localization.
 
-    # Isolate some parameters from params.
+# Returns
+A new `BasicSMLD` with updated `track_id` values in the emitters.
+"""
+function precluster(smld::BasicSMLD{T, E}, params::ParamStruct = ParamStruct()) where {T, E<:Emitter2DFit}
+    # Convert to StructArray for efficient column access
+    emitters = StructArray(smld.emitters)
+    n = length(emitters)
+
+    # Sort by dataset
+    sortindices_ds = sortperm(emitters.dataset)
+    frames = emitters.frame[sortindices_ds]
+    datasets = emitters.dataset[sortindices_ds]
+    xy = hcat(emitters.x[sortindices_ds], emitters.y[sortindices_ds])'
+    σ_x = emitters.σ_x[sortindices_ds]
+    σ_y = emitters.σ_y[sortindices_ds]
+    mean_σ = vec(mean(hcat(σ_x, σ_y), dims=2))
+
+    # Extract parameters
     maxframegap = params.maxframegap
     nsigmadev = params.nsigmadev
     nmaxnn = params.nmaxnn
 
-    # Initialize a connectID array, with each localization being considered
-    # a unique cluster.
-    nlocalizations = length(framenum)
-    connectID = collect(1:nlocalizations)
+    # Initialize track IDs - each localization starts as unique cluster
+    track_ids = collect(1:n)
 
-    # Loop through frames and add localizations to clusters.
-    nperdataset = StatsBase.counts(datasetnum)
-    nperdataset = nperdataset[nperdataset.!=0]
-    ncumulativeDS = [0; cumsum(nperdataset)]
-    maxID = nlocalizations
-    for nn = 1:length(unique(datasetnum))
-        # Isolate some arrays for the nn-th dataset and sort w.r.t. their 
-        # framenum.
-        currentindDS = (1:nperdataset[nn]) .+ ncumulativeDS[nn]
-        sortindicesFN = sortperm(framenum[currentindDS])
-        currentindDS = currentindDS[sortindicesFN]
-        framenumCDS = framenum[currentindDS]
-        xyCDS = xy[:, currentindDS]
-        mean_seCDS = mean_se[currentindDS]
-        connectIDCDS = connectID[currentindDS]
+    # Process each dataset separately
+    n_per_dataset = counts(datasets)
+    n_per_dataset = n_per_dataset[n_per_dataset .!= 0]
+    cumulative_ds = [0; cumsum(n_per_dataset)]
+    max_id = n
 
-        # Loop through frames and add localizations to clusters.
-        nperframe = counts(framenumCDS)
-        nperframe = nperframe[nperframe.!=0]
-        ncumulativeFN = [0; cumsum(nperframe)]
-        clusterinds = [[ind] for ind in 1:nperdataset[nn]]
-        frames = unique(framenumCDS)
-        for ff = 1:length(frames)
-            # Determine which localizations should be considered for
-            # clustering.
-            currentindFN = (1:nperframe[ff]) .+ ncumulativeFN[ff]
-            candidateind = findall((framenumCDS .>= (frames[ff] .- maxframegap)) .&
-                                   (framenumCDS .<= frames[ff]))
-            if length(candidateind) < 2
-                maxID += 1
-                connectIDCDS[currentindFN] = (1:nperframe[ff]) .+ maxID
-                maxID += nperframe[ff]
+    for ds_idx in 1:length(unique(datasets))
+        # Extract indices for current dataset
+        current_idx_ds = (1:n_per_dataset[ds_idx]) .+ cumulative_ds[ds_idx]
+
+        # Sort by frame within dataset
+        sortindices_frame = sortperm(frames[current_idx_ds])
+        current_idx_ds = current_idx_ds[sortindices_frame]
+
+        frames_ds = frames[current_idx_ds]
+        xy_ds = xy[:, current_idx_ds]
+        mean_σ_ds = mean_σ[current_idx_ds]
+        track_ids_ds = track_ids[current_idx_ds]
+
+        # Process frames
+        n_per_frame = counts(frames_ds)
+        n_per_frame = n_per_frame[n_per_frame .!= 0]
+        cumulative_frame = [0; cumsum(n_per_frame)]
+        cluster_indices = [[idx] for idx in 1:n_per_dataset[ds_idx]]
+        unique_frames = unique(frames_ds)
+
+        for frame_idx in 1:length(unique_frames)
+            current_frame = unique_frames[frame_idx]
+            current_idx_frame = (1:n_per_frame[frame_idx]) .+ cumulative_frame[frame_idx]
+
+            # Find candidate localizations for clustering (within frame gap)
+            candidate_idx = findall(
+                (frames_ds .>= (current_frame - maxframegap)) .&
+                (frames_ds .<= current_frame)
+            )
+
+            if length(candidate_idx) < 2
+                # No clustering possible - assign new unique IDs
+                max_id += 1
+                track_ids_ds[current_idx_frame] = (1:n_per_frame[frame_idx]) .+ max_id
+                max_id += n_per_frame[frame_idx]
                 continue
             end
 
-            # Find the nearest-neighbor to the current localizations
-            # which is a candidate for clustering.
-            kdtree = NearestNeighbors.KDTree(xyCDS[:, candidateind])
-            nnindices, nndist = NearestNeighbors.knn(kdtree, xyCDS[:, currentindFN],
-                min(nmaxnn + 1, length(candidateind)), true)
+            # Build KD-tree for nearest neighbor search
+            kdtree = KDTree(xy_ds[:, candidate_idx])
+            nn_indices, nn_distances = knn(
+                kdtree,
+                xy_ds[:, current_idx_frame],
+                min(nmaxnn + 1, length(candidate_idx)),
+                true
+            )
 
-            # Assign localizations to clusters based on `nndist`.
-            for ii in 1:nperframe[ff]
-                # Determine which candidates meet our distance cutoff.
-                se_sum = mean_seCDS[currentindFN[ii]] .+
-                         mean_seCDS[candidateind[nnindices[ii]]]
-                validnninds = nnindices[ii][nndist[ii].<=(nsigmadev*se_sum)]
+            # Assign localizations to clusters based on distance cutoff
+            for i in 1:n_per_frame[frame_idx]
+                # Determine which candidates meet distance criterion
+                σ_sum = mean_σ_ds[current_idx_frame[i]] .+ mean_σ_ds[candidate_idx[nn_indices[i]]]
+                valid_nn_idx = nn_indices[i][nn_distances[i] .<= (nsigmadev * σ_sum)]
 
-                # Update connectIDCDS to reflect the new clusters.
-                updateinds = unique([currentindFN[ii]
-                    candidateind[validnninds]
-                    findall(connectIDCDS .== connectIDCDS[currentindFN[ii]])
-                    clusterinds[candidateind[validnninds]][1]])
-                connectIDCDS[updateinds] .= minimum(connectIDCDS[updateinds])
+                # Update track IDs to reflect merged clusters
+                update_idx = unique([
+                    current_idx_frame[i];
+                    candidate_idx[valid_nn_idx];
+                    findall(track_ids_ds .== track_ids_ds[current_idx_frame[i]]);
+                    cluster_indices[candidate_idx[valid_nn_idx]]...
+                ])
 
-                # Keep track of which indices have been associated.
-                for jj in updateinds
-                    clusterinds[jj] = [clusterinds[jj][1]; updateinds]
+                track_ids_ds[update_idx] .= minimum(track_ids_ds[update_idx])
+
+                # Track cluster membership
+                for j in update_idx
+                    cluster_indices[j] = [cluster_indices[j][1]; update_idx]
                 end
             end
         end
-        connectID[currentindDS] = deepcopy(connectIDCDS)
+
+        track_ids[current_idx_ds] = track_ids_ds
     end
 
-    # Store the updated connectID in the output structure, ensuring that the
-    # values range from 1:NClusters (which is expected by later codes).
-    smld_preclustered = deepcopy(smld)
-    smld_preclustered.connectID = 
-        Vector{Int}(undef, length(smld_preclustered.framenum))
-    smld_preclustered.connectID[sortindicesDS] = compress_connectID(connectID)
+    # Compress track IDs to range 1:n_clusters
+    compressed_track_ids = compress_connectID(track_ids)
 
-    return smld_preclustered
+    # Create new emitters with updated track IDs
+    new_emitters = Vector{E}(undef, n)
+    for i in 1:n
+        idx = sortindices_ds[i]
+        new_emitters[idx] = E(
+            emitters.x[idx],
+            emitters.y[idx],
+            emitters.photons[idx],
+            emitters.bg[idx],
+            emitters.σ_x[idx],
+            emitters.σ_y[idx],
+            emitters.σ_photons[idx],
+            emitters.σ_bg[idx],
+            emitters.frame[idx],
+            emitters.dataset[idx],
+            compressed_track_ids[i],
+            emitters.id[idx]
+        )
+    end
+
+    return BasicSMLD(new_emitters, smld.camera, smld.n_frames, smld.n_datasets, smld.metadata)
 end

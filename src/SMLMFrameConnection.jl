@@ -1,11 +1,13 @@
 module SMLMFrameConnection
 
 using SMLMData
+using SMLMData: BasicSMLD, Emitter2DFit
 using Hungarian
 using NearestNeighbors
 using Optim
 using StatsBase
 using Statistics
+using StructArrays
 
 
 include("structdefinitions.jl")

@@ -1,53 +1,86 @@
-using SMLMData
 using StatsBase
 
 """
-    smld_combined = combinelocalizations(smld::SMLMData.SMLD2D)
+    combinelocalizations(smld::BasicSMLD)
 
 Combine clustered localizations in `smld` into higher precision localizations.
 
 # Description
-This function combines localizations in `smld` that share the same value of
-smld.connectID.  Localizations are combined assuming they arose from 
-independent measurements of the same position with Gaussian errors.
+This function combines localizations in `smld` that share the same `track_id`.
+Localizations are combined assuming they arose from independent measurements of
+the same position with Gaussian errors, using inverse variance weighting.
+
+# Returns
+A new `BasicSMLD` with one emitter per unique `track_id`, containing combined
+localization data.
 """
-function combinelocalizations(smld::SMLMData.SMLD2D)
-    # Isolate and sort some arrays from `smld`.
-    connectID = smld.connectID
-    sortindices = sortperm(connectID)
-    connectID = connectID[sortindices]
-    x = smld.x[sortindices]
-    y = smld.y[sortindices]
-    σ_x = smld.σ_x[sortindices]
-    σ_y = smld.σ_y[sortindices]
-    photons = smld.photons[sortindices]
-    σ_photons = smld.σ_photons[sortindices]
-    bg = smld.bg[sortindices]
-    σ_bg = smld.σ_bg[sortindices]
-    framenum = smld.framenum[sortindices]
-    datasetnum = smld.datasetnum[sortindices]
+function combinelocalizations(smld::BasicSMLD{T, E}) where {T, E<:Emitter2DFit}
+    # Convert to StructArray for efficient column access
+    emitters = StructArray(smld.emitters)
 
-    # Loop over clusters and combine their localization data as appropriate.
-    nperID = counts(connectID)
-    nperID = nperID[nperID .!= 0]
-    ncumulative = [0; cumsum(nperID)]
-    nclusters = length(nperID)
-    smld_combined = deepcopy(smld)
-    for nn in 1:nclusters
-        indices = (1:nperID[nn]) .+ ncumulative[nn]
-        smld_combined.x[nn] = StatsBase.mean(x[indices], weights(1.0 / σ_x[indices] .^ 2))
-        smld_combined.y[nn] = StatsBase.mean(y[indices], weights(1.0 / σ_y[indices] .^ 2))
-        smld_combined.σ_x[nn] = sqrt(1.0 / sum(1.0 ./ σ_x[indices] .^ 2))
-        smld_combined.σ_y[nn] = sqrt(1.0 / sum(1.0 ./ σ_y[indices] .^ 2))
-        smld_combined.photons[nn] = sum(photons[indices])
-        smld_combined.σ_photons[nn] = sqrt(sum(σ_photons[indices] .^ 2))
-        smld_combined.bg[nn] = sum(bg[indices])
-        smld_combined.σ_bg[nn] = sqrt(sum(σ_bg[indices] .^ 2))
-        smld_combined.connectID[nn] = connectID[indices[1]]
-        smld_combined.framenum[nn] = framenum[indices[1]]
-        smld_combined.datasetnum[nn] = datasetnum[indices[1]]
+    # Sort by track_id
+    sortindices = sortperm(emitters.track_id)
+
+    # Get counts for each track_id
+    track_ids_sorted = emitters.track_id[sortindices]
+    n_per_track = counts(track_ids_sorted)
+    n_per_track = n_per_track[n_per_track .!= 0]
+    cumulative = [0; cumsum(n_per_track)]
+    n_clusters = length(n_per_track)
+
+    # Combine emitters for each cluster
+    combined_emitters = Vector{E}(undef, n_clusters)
+
+    for cluster_idx in 1:n_clusters
+        indices = sortindices[(1:n_per_track[cluster_idx]) .+ cumulative[cluster_idx]]
+        combined_emitters[cluster_idx] = combine_emitter_group(emitters, indices, E)
     end
-    smld_combined = SMLMData.isolatesmld(smld_combined, 1:nclusters)
 
-    return smld_combined
+    return BasicSMLD(combined_emitters, smld.camera, smld.n_frames, smld.n_datasets, smld.metadata)
+end
+
+"""
+    combine_emitter_group(emitters::StructArray, indices::Vector{Int}, ::Type{E})
+
+Combine a group of emitters using inverse variance weighted averaging.
+
+Positions are weighted by inverse variance (1/σ²). Photons and backgrounds are
+summed. Uncertainties are propagated according to error propagation rules.
+"""
+function combine_emitter_group(emitters::StructArray, indices::Vector{Int}, ::Type{E}) where {E<:Emitter2DFit}
+    # Inverse variance weights for position
+    w_x = 1.0 ./ emitters.σ_x[indices].^2
+    w_y = 1.0 ./ emitters.σ_y[indices].^2
+
+    # Weighted mean positions
+    x_combined = sum(emitters.x[indices] .* w_x) / sum(w_x)
+    y_combined = sum(emitters.y[indices] .* w_y) / sum(w_y)
+
+    # Combined uncertainties (inverse variance weighting)
+    σ_x_combined = sqrt(1.0 / sum(w_x))
+    σ_y_combined = sqrt(1.0 / sum(w_y))
+
+    # Sum photons and backgrounds
+    photons_combined = sum(emitters.photons[indices])
+    bg_combined = sum(emitters.bg[indices])
+
+    # Propagate uncertainties (uncorrelated errors)
+    σ_photons_combined = sqrt(sum(emitters.σ_photons[indices].^2))
+    σ_bg_combined = sqrt(sum(emitters.σ_bg[indices].^2))
+
+    # Use metadata from first emitter in cluster
+    return E(
+        x_combined,
+        y_combined,
+        photons_combined,
+        bg_combined,
+        σ_x_combined,
+        σ_y_combined,
+        σ_photons_combined,
+        σ_bg_combined,
+        emitters.frame[indices[1]],
+        emitters.dataset[indices[1]],
+        emitters.track_id[indices[1]],
+        0  # Reset ID for combined emitter
+    )
 end

@@ -1,108 +1,169 @@
-using SMLMData
-
-
 """
-    connect1DS!(smld::SMLMData.SMLD2D, dataset::Int; maxframegap::Int = 5)
+    connect1DS!(smld::BasicSMLD, dataset::Int; maxframegap::Int = 5)
 
 Define the "ideal" frame-connection result for simulated `smld` with one dataset.
 
 # Description
-This is a helper function which defines the ideal FC result for a single 
-dataset.  The user should probably not bother using this, and instead should
-call defineidealFC().
+This is a helper function which defines the ideal FC result for a single dataset.
+The user should probably not bother using this, and instead should call `defineidealFC()`.
 
-# Inputs
-- `smld`: SMLMData.SMLD2D with smld.connectID populated to indicate emitter ID.
-- `dataset`: Dataset number to be connected.
-- `maxframegap`: Maximum frame gap allowed between localizations connected in
-                 the "ideal" result.
+Localizations belonging to the same emitter (as indicated by their `.id` field) are
+assigned the same `track_id` unless they are separated by more than `maxframegap` frames.
+
+# Arguments
+- `smld`: BasicSMLD with emitter `.id` values populated to indicate true emitter membership
+- `dataset`: Dataset number to be connected
+- `maxframegap`: Maximum frame gap allowed between localizations connected in the "ideal" result
+
+# Returns
+Modified `smld` with updated `track_id` values for the specified dataset.
 """
-function connect1DS!(smld::SMLMData.SMLD2D, dataset::Int; maxframegap::Int = 5)
-    # Loop through associated localizations and combine them as appropriate.
-    currentDS = smld.datasetnum .== dataset
-    smld_current = smld[currentDS]
-    maxID = maximum(smld.connectID)
-    smld_current.connectID .+= maxID # recompressed later
-    for ii in unique(smld_current.connectID)
-        # Determine which localizations belong to the ii-th emitter.
-        currentinds = findall(smld_current.connectID .== ii)
-    
-        # Sort these localizations with respect to their frame.
-        framenum = smld_current.framenum[currentinds]
-        sortinds = sortperm(framenum)
-        sortedframes = framenum[sortinds]
-        sorted_currentinds = currentinds[sortinds]
-    
-        # If all of these localizations are within the framegap, no action is
-        # needed (they already share the same connectID).
-        framediff = diff(sortedframes)
-        if all(framediff .<= maxframegap)
+function connect1DS!(smld::BasicSMLD{T, E}, dataset::Int; maxframegap::Int = 5) where {T, E<:Emitter2DFit}
+    # Get maximum existing track_id
+    max_track_id = maximum(e.track_id for e in smld.emitters; init=0)
+
+    # Create new emitters array
+    new_emitters = Vector{E}(undef, length(smld.emitters))
+
+    # Process emitters
+    for (idx, emitter) in enumerate(smld.emitters)
+        if emitter.dataset != dataset
+            # Keep track_id unchanged for other datasets
+            new_emitters[idx] = emitter
+        else
+            # Will be updated below
+            new_emitters[idx] = set_track_id(emitter, emitter.track_id + max_track_id)
+        end
+    end
+
+    # Group by emitter ID within this dataset
+    dataset_indices = findall(e -> e.dataset == dataset, new_emitters)
+    emitter_ids = unique(new_emitters[i].id for i in dataset_indices)
+
+    for emitter_id in emitter_ids
+        # Find all localizations of this emitter in current dataset
+        current_indices = findall(i -> new_emitters[i].dataset == dataset &&
+                                       new_emitters[i].id == emitter_id,
+                                  dataset_indices)
+        current_indices = dataset_indices[current_indices]
+
+        if isempty(current_indices)
             continue
         end
-    
-        # Determine which localizations we can combine.
-        for ff = 1:length(framediff)
-            if framediff[ff] <= maxframegap
-                # Connect these localizations.
-                smld_current.connectID[sorted_currentinds[ff+1]] =
-                    smld_current.connectID[sorted_currentinds[ff]]
+
+        # Sort by frame
+        frames = [new_emitters[i].frame for i in current_indices]
+        sort_idx = sortperm(frames)
+        sorted_indices = current_indices[sort_idx]
+        sorted_frames = frames[sort_idx]
+
+        # Check if all within maxframegap
+        frame_diffs = diff(sorted_frames)
+        if all(frame_diffs .<= maxframegap)
+            # All localizations can share the same track_id (already set)
+            continue
+        end
+
+        # Split into separate blinking events based on frame gaps
+        for i in 1:length(frame_diffs)
+            if frame_diffs[i] <= maxframegap
+                # Connect these localizations
+                new_emitters[sorted_indices[i+1]] = set_track_id(
+                    new_emitters[sorted_indices[i+1]],
+                    new_emitters[sorted_indices[i]].track_id
+                )
             else
-                # Localization ff+1 should be a new blinking event.
-                maxID += 1
-                smld_current.connectID[sorted_currentinds[ff+1]] = maxID
+                # Start new blinking event
+                max_track_id += 1
+                new_emitters[sorted_indices[i+1]] = set_track_id(
+                    new_emitters[sorted_indices[i+1]],
+                    max_track_id
+                )
             end
         end
     end
 
-    # Update smld.connectID for the current dataset.
-    smld.connectID[currentDS] = smld_current.connectID
-
-    return smld
-end
-
-function connect1DS(smld::SMLMData.SMLD2D, dataset::Int; maxframegap::Int = 5)
-    return connect1DS!(deepcopy(smld))
+    return BasicSMLD(new_emitters, smld.camera, smld.n_frames, smld.n_datasets, smld.metadata)
 end
 
 """
-    smld, smld_combined = defineidealFC!(smld::SMLMData.SMLD2D; 
-        maxframegap::Int = 5)
+    connect1DS(smld::BasicSMLD, dataset::Int; maxframegap::Int = 5)
+
+Non-mutating version of `connect1DS!`.
+"""
+function connect1DS(smld::BasicSMLD{T, E}, dataset::Int; maxframegap::Int = 5) where {T, E<:Emitter2DFit}
+    return connect1DS!(deepcopy(smld), dataset; maxframegap=maxframegap)
+end
+
+"""
+    defineidealFC!(smld::BasicSMLD; maxframegap::Int = 5)
 
 Define the "ideal" frame-connection result for a simulated `smld`.
 
 # Description
-This function defines the "ideal" frame connection result from a simulation.
-That is to say, for a simulated SMLD2D structure `smld` with `connectID` field
-populated to indicate emitter membership of localizations, this function will
-generate an "ideal" FC result which combines all blinking events that appeared
-with frame gaps less than `maxframegap` of one another.  Note that for very
-high duty cycles, multiple blinking events might be mistakingly combined by
-this method (i.e., if the emitter blinks back on within `maxframegap` frames
-of its previous blink).  Note that localizations are not allowed to be 
-connected across datasets.
+For simulated BasicSMLD structures where the emitter `.id` field indicates true
+emitter membership, this function generates an "ideal" FC result which combines
+all blinking events that appeared with frame gaps less than `maxframegap`.
 
-# Inputs
--`smld`: SMLMData.SMLD2D with smld.connectID populated to indicate emitter ID.
--`maxframegap`: Maximum frame gap allowed between localizations connected in
-                the "ideal" result.
+Note: For very high duty cycles, multiple blinking events might be mistakenly
+combined if the emitter blinks back on within `maxframegap` frames. Localizations
+are not allowed to be connected across datasets.
 
-# Outputs
--`smld_out`: Ideal frame-connection result on input `smld` with localizations
-             combined as appropriate.
--`smld_connected`: Copy of the input `smld` with smld_connected.connectID 
-                   modified to reflect blinking event ID (i.e., `smld_out` is
-                   generated as smld_out = combinelocalizations(smld_connected))
+# Arguments
+- `smld`: BasicSMLD with emitter `.id` values populated to indicate true emitter membership
+- `maxframegap`: Maximum frame gap allowed between connected localizations (default = 5)
+
+# Returns
+- `smld`: Input SMLD with `track_id` modified to reflect ideal blinking event connections
+- `smld_combined`: Result of combining localizations with same `track_id`
 """
-function defineidealFC!(smld::SMLMData.SMLD2D; maxframegap::Int = 5)
-    # Loop through datasets and combine localizations as appropriate.
-    for ii in unique(smld.datasetnum)
-        connect1DS!(smld, ii; maxframegap = maxframegap)
+function defineidealFC!(smld::BasicSMLD{T, E}; maxframegap::Int = 5) where {T, E<:Emitter2DFit}
+    # Process each dataset
+    for dataset_id in unique(e.dataset for e in smld.emitters)
+        smld = connect1DS!(smld, dataset_id; maxframegap=maxframegap)
     end
-    compress_connectID!(smld.connectID)
 
-    return smld, combinelocalizations(smld)
+    # Compress track IDs to sequential 1:n_clusters
+    track_ids = [e.track_id for e in smld.emitters]
+    compress_connectID!(track_ids)
+
+    # Update emitters with compressed track IDs
+    new_emitters = [set_track_id(smld.emitters[i], track_ids[i]) for i in 1:length(smld.emitters)]
+    smld = BasicSMLD(new_emitters, smld.camera, smld.n_frames, smld.n_datasets, smld.metadata)
+
+    # Combine localizations
+    smld_combined = combinelocalizations(smld)
+
+    return smld, smld_combined
 end
 
-function defineidealFC(smld::SMLMData.SMLD2D; maxframegap::Int = 5)
-    return defineidealFC!(deepcopy(smld); maxframegap = maxframegap)
+"""
+    defineidealFC(smld::BasicSMLD; maxframegap::Int = 5)
+
+Non-mutating version of `defineidealFC!`.
+"""
+function defineidealFC(smld::BasicSMLD{T, E}; maxframegap::Int = 5) where {T, E<:Emitter2DFit}
+    return defineidealFC!(deepcopy(smld); maxframegap=maxframegap)
+end
+
+"""
+    set_track_id(emitter::Emitter2DFit, track_id::Int)
+
+Create a new emitter with updated track_id.
+"""
+function set_track_id(emitter::Emitter2DFit{T}, track_id::Int) where T
+    return Emitter2DFit{T}(
+        emitter.x,
+        emitter.y,
+        emitter.photons,
+        emitter.bg,
+        emitter.σ_x,
+        emitter.σ_y,
+        emitter.σ_photons,
+        emitter.σ_bg,
+        emitter.frame,
+        emitter.dataset,
+        track_id,
+        emitter.id
+    )
 end
