@@ -3,41 +3,81 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://JuliaSMLM.github.io/SMLMFrameConnection.jl/stable)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://JuliaSMLM.github.io/SMLMFrameConnection.jl/dev)
 [![Build Status](https://github.com/JuliaSMLM/SMLMFrameConnection.jl/workflows/CI/badge.svg)](https://github.com/JuliaSMLM/SMLMFrameConnection.jl/actions)
-[![Coverage](https://codecov.io/gh/JuliaSMLM/SMLMFrameConnection.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/JuliaSMLM/SMLMFrameConnection.jl)
-
+[![Coverage](https://codecov.io/gh/JuliaSMLM/SMLMFrameConnection.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/JuliaSMLM/SMLMFrameConnection.jl)
 
 ## Overview
-SMLMFrameConnection performs frame-connection on localization microscopy data organized in an SMLMData.SMLD2D structure (https://github.com/JuliaSMLM/SMLMData.jl). 
-Specifically, SMLMFrameConnection connects repeated localizations of a single blinking event of an emitter into a single higher precision localization.  This is done 
-using the algorithm(s) presented in https://doi.org/10.3389/fbinf.2021.724325.  Localizations which were connected will share the same unique integer value for the field
-SMLMData.SMLD2D.connectID.
 
+SMLMFrameConnection performs frame-connection on localization microscopy data organized in an `SMLMData.BasicSMLD` structure with `Emitter2DFit` emitters (see [SMLMData.jl](https://github.com/JuliaSMLM/SMLMData.jl)).
 
-## Interface
-Once an SMLMData.SMLD2D structure is fully populated, the user only needs to run a single high-level method from the package: `frameconnect()`.
-All fields of the SMLMData.SMLD2D structure must be populated with either meaningful values (e.g., for fields like `x`, `y`, `σ_x`, `σ_y`, and `framenum`, 
-which the algorithm depends on) or by placeholders with a meaningful size (e.g., fields like `bg` and `σ_bg`, which may not be available, should be set to something like 
-`smld.bg = zeros(Float64, length(smld.framenum))`, and `σ_bg = fill(Inf64, length(smld.framenum))`).  
+Frame-connection combines repeated localizations of a single blinking event into a single higher-precision localization. This is done using the algorithm presented in [Schodt & Lidke 2021](https://doi.org/10.3389/fbinf.2021.724325). Connected localizations share the same `track_id` value in the output emitters.
 
-The algorithm can be run on the fully populated `smld::SMLMData.SMLD2D` with default parameters as
+## Installation
 
-```smld_connected, smld_preclustered, smld_combined, params = SMLMFrameConnection.frameconnect(smld)```
-
-The output `smld_connected` is a copy of `smld` with the field `smld.connectID` updated to associate connected localizations.  `smld_preclustered` is a copy of `smld` 
-with the field `smld_preclustered.connectID` updated to associate localizations that belonged to the same precluster.  `smld_combined` contains the combined higher 
-precision localizations (i.e., `smld_combined=SMLMFrameConnection.combinelocalizations(smld_connected)`) and is considered the main output of this package.  `params` 
-is a structure containing the user-defined and internally-defined parameters used in the algorithm.
-
-Several user-defined parameters can be changed as optional keyword arguments to `frameconnect()`:
-
+```julia
+using Pkg
+Pkg.add("SMLMFrameConnection")
 ```
-smld_connected, smld_preclustered, smld_combined, params = SMLMFrameConnection.frameconnect(smld;
-    nnearestclusters = 2, nsigmadev = 5.0,
-    maxframegap = 5, nmaxnn = 2)
+
+## Basic Usage
+
+```julia
+using SMLMData, SMLMFrameConnection
+
+# Create or load your BasicSMLD with Emitter2DFit emitters
+# Emitters must have valid x, y, σ_x, σ_y, and frame fields
+
+smld_connected, smld_preclustered, smld_combined, params = frameconnect(smld)
 ```
-See the documentation in SMLMFrameConnection/structdefinitions.jl for a description of these parameters and for guidance to which functions use them.
+
+### Outputs
+
+- `smld_connected`: Input with `track_id` updated to associate connected localizations
+- `smld_preclustered`: Intermediate result with precluster associations
+- `smld_combined`: **Main output** - combined higher-precision localizations
+- `params`: Parameters used in the algorithm (user-defined and estimated)
+
+### Parameters
+
+```julia
+smld_connected, smld_preclustered, smld_combined, params = frameconnect(smld;
+    nnearestclusters = 2,   # Nearest preclusters for density estimation
+    nsigmadev = 5.0,        # Sigma multiplier for preclustering threshold
+    maxframegap = 5,        # Maximum frame gap for temporal adjacency
+    nmaxnn = 2              # Maximum nearest-neighbors for precluster membership
+)
+```
+
+## Input Requirements
+
+The input `BasicSMLD` must contain `Emitter2DFit` emitters with:
+- `x`, `y`: Position coordinates (microns)
+- `σ_x`, `σ_y`: Position uncertainties (microns) - **required for MLE combination**
+- `frame`: Frame number
+- `dataset`: Dataset identifier (for multi-dataset processing)
+- `photons`, `bg`, `σ_photons`, `σ_bg`: Photometry (combined in output)
+
+## Example
+
+```julia
+using SMLMData, SMLMFrameConnection
+
+# Create camera and emitters
+cam = IdealCamera(1:512, 1:512, 0.1)  # 0.1 μm pixels
+emitters = [
+    Emitter2DFit{Float64}(5.0, 5.0, 1000.0, 10.0, 0.02, 0.02, 50.0, 2.0; frame=1),
+    Emitter2DFit{Float64}(5.01, 5.01, 1200.0, 12.0, 0.02, 0.02, 60.0, 2.0; frame=2),
+    Emitter2DFit{Float64}(5.02, 4.99, 1100.0, 11.0, 0.02, 0.02, 55.0, 2.0; frame=3),
+]
+smld = BasicSMLD(emitters, cam, 3, 1)
+
+# Run frame connection
+_, _, smld_combined, _ = frameconnect(smld; maxframegap=5)
+
+# smld_combined now contains 1 emitter with improved precision
+```
 
 ## Citation
-David J. Schodt and Keith A. Lidke, "Spatiotemporal Clustering of Repeated Super-Resolution Localizations via Linear Assignment Problem", 
-Frontiers in Bioinformatics, 2021 
+
+David J. Schodt and Keith A. Lidke, "Spatiotemporal Clustering of Repeated Super-Resolution Localizations via Linear Assignment Problem", Frontiers in Bioinformatics, 2021
+
 https://doi.org/10.3389/fbinf.2021.724325
