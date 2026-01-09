@@ -31,7 +31,7 @@ function estimatedensities(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
     # If only one cluster is present, we should return an answer right away and stop.
     if nclusters == 1
         if size(clusterdata[1], 1) == 1
-            initialdensity = 1
+            initialdensity = 1.0
         else
             clusterarea = (maximum(clusterdata[1][:, 1]) - minimum(clusterdata[1][:, 1])) *
                           (maximum(clusterdata[1][:, 1]) - minimum(clusterdata[1][:, 1]))
@@ -39,7 +39,7 @@ function estimatedensities(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
                              ((params.k_bleach / params.k_off) / (1 - params.p_miss)) /
                              (1 - exp(-params.k_bleach * dutycycle * (maxframe - 1)))
         end
-        return initialdensity
+        return [initialdensity]  # Return as vector to match ParamStruct.initialdensity type
     end
 
     # Determine the center of all clusters assuming each arose from the same
