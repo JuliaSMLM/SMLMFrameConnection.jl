@@ -2,28 +2,30 @@ using SMLMData
 using NearestNeighbors
 
 """
-    initialdensity = estimatedensities(smld::SMLMData.SMLD2D, 
-        clusterdata::Vector{Matrix{Float32}}, params::ParamStruct)
+    initialdensity = estimatedensities(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
+        clusterdata::Vector{Matrix{Float32}}, params::ParamStruct) where T
 
 Estimate local emitter densities for clusters in `smld` and `clusterdata`.
 
 # Description
 The initial local densities `initialdensity` around each pre-cluster present in
 `smld`/`clusterdata` are estimated based on the local density of pre-clusters
-throughout the entire set of data as well as some of the rate parameters 
+throughout the entire set of data as well as some of the rate parameters
 provided in `params`.
 """
-function estimatedensities(smld::SMLMData.SMLD2D,
+function estimatedensities(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
     clusterdata::Vector{Matrix{Float32}},
-    params::ParamStruct)
+    params::ParamStruct) where T
 
     # Define some new parameters.
     dutycycle = params.k_on / (params.k_on + params.k_off + params.k_bleach)
     nclusters = length(clusterdata)
-    if isempty(smld.nframes)
-        maxframe = maximum(smld.framenum)
+
+    # Get max frame from n_frames or from emitters
+    if smld.n_frames > 0
+        maxframe = smld.n_frames
     else
-        maxframe = smld.nframes
+        maxframe = maximum(e.frame for e in smld.emitters)
     end
 
     # If only one cluster is present, we should return an answer right away and stop.
@@ -55,12 +57,31 @@ function estimatedensities(smld::SMLMData.SMLD2D,
             sum(y ./ σ_y .^ 2) / sum(1 ./ σ_y .^ 2)]
     end
 
-    # Estimate the local cluster density based on the distance to 
+    # Estimate the local cluster density based on the distance to
     # nearest-neighbors.
-    kneighbors = minimum([params.nnearestclusters nclusters - 1])
+    kneighbors = minimum([params.nnearestclusters; nclusters - 1])
+    kneighbors = max(kneighbors, 2)  # Ensure at least 2 neighbors
+
     kdtree = NearestNeighbors.KDTree(clustercenters)
-    _, nndist = NearestNeighbors.knn(kdtree, clustercenters, kneighbors + 1)
-    nndist = getindex.(nndist, 1:(kneighbors-1))
+    _, nndist_raw = NearestNeighbors.knn(kdtree, clustercenters, kneighbors + 1)
+
+    # Get non-zero distances (skip self-distance which is 0)
+    # Then get the k-th nearest non-self neighbor
+    nndist = zeros(nclusters)
+    for i in 1:nclusters
+        # Filter out zero distances (self)
+        nonzero_dists = filter(d -> d > 0, nndist_raw[i])
+        if length(nonzero_dists) >= kneighbors
+            sort!(nonzero_dists)
+            nndist[i] = nonzero_dists[kneighbors]  # k-th nearest non-self neighbor
+        elseif !isempty(nonzero_dists)
+            nndist[i] = maximum(nonzero_dists)
+        else
+            # Fallback: use a small positive value to avoid Inf
+            nndist[i] = 0.01
+        end
+    end
+
     clusterdensity = (kneighbors + 1) ./ (pi * nndist .^ 2)
 
     # Estimate the density of underlying emitters based on cluster density.
