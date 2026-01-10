@@ -42,17 +42,43 @@ function estimateparams(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
     # over time (see citation for description of this math).
     nlocperframe = counts(framenum)
     nlocperframe = nlocperframe[nlocperframe.!=0]
-    frames = convert(Array{Float32}, unique(framenum))
+    frames = convert(Array{Float64}, unique(framenum))
     nloccumulative = cumsum(nlocperframe)
     k_off = nclusters / nloccumulative[end]
     k_bleach = maximum([10^-5 k_offpbleach - k_off])
-    k(k_on) = k_on + k_offpbleach
-    l1(k_on) = k_on * k_bleach / k(k_on)
-    l2(k_on) = k(k_on) - l1(k_on)
-    model(x) = ceil(x[1]) * (1.0 .- p_miss) * (x[2] / k(x[2])) *
-               ((1 / l1(x[2])) * (1.0 .- exp.(-l1(x[2]) * (frames .- 1.0))) .-
-                (1 / l2(x[2])) * (1.0 .- exp.(-l2(x[2]) * (frames .- 1.0))))
-    costfunction(x) = Statistics.mean((nloccumulative .- model(x)) .^ 2)
+
+    # Pre-compute frames-1 once (avoid repeated allocation)
+    frames_m1 = frames .- 1.0
+    nframes = length(frames)
+
+    # Allocation-free cost function for optimization
+    # Uses a loop instead of broadcasting to avoid temporary arrays
+    function costfunction(x)
+        nem, kon = x[1], x[2]
+        k_val = kon + k_offpbleach
+        l1 = kon * k_bleach / k_val
+        l2 = k_val - l1
+        coef = ceil(nem) * (1.0 - p_miss) * (kon / k_val)
+
+        # Guard against division by zero
+        if l1 ≈ 0.0 || l2 ≈ 0.0
+            return 1e10
+        end
+
+        inv_l1 = 1.0 / l1
+        inv_l2 = 1.0 / l2
+
+        mse = 0.0
+        @inbounds for i in 1:nframes
+            fm1 = frames_m1[i]
+            pred = coef * (inv_l1 * (1.0 - exp(-l1 * fm1)) -
+                          inv_l2 * (1.0 - exp(-l2 * fm1)))
+            diff = nloccumulative[i] - pred
+            mse += diff * diff
+        end
+        return mse / nframes
+    end
+
     lowerbound = [Float64(maximum(nlocperframe)); 1e-5]
     upperbound = [Float64(nclusters); nloccumulative[end] / frames[end]]
 
@@ -73,9 +99,11 @@ function estimateparams(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
     initialguess[1] = clamp(initialguess[1], lowerbound[1], upperbound[1])
     initialguess[2] = clamp(initialguess[2], lowerbound[2], upperbound[2])
 
-    inner_optimizer = GradientDescent()
+    # Use NelderMead: derivative-free, fast convergence for 2-parameter problems
+    # (Previous: GradientDescent was extremely slow due to linear convergence
+    # and finite-difference gradient computation)
     optimresults = optimize(costfunction, lowerbound, upperbound, initialguess,
-        Fminbox(inner_optimizer))
+        Fminbox(NelderMead()), Optim.Options(iterations=500))
     xhat = optimresults.minimizer
     nemitters = xhat[1]
     k_on = xhat[2]
