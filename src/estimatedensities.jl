@@ -60,7 +60,9 @@ function estimatedensities(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
     # Estimate the local cluster density based on the distance to
     # nearest-neighbors.
     kneighbors = minimum([params.nnearestclusters; nclusters - 1])
-    kneighbors = max(kneighbors, 2)  # Ensure at least 2 neighbors
+    kneighbors = max(kneighbors, 1)  # Ensure at least 1 neighbor
+    # Ensure we don't request more neighbors than available (including self)
+    kneighbors = min(kneighbors, nclusters - 1)
 
     kdtree = NearestNeighbors.KDTree(clustercenters)
     _, nndist_raw = NearestNeighbors.knn(kdtree, clustercenters, kneighbors + 1)

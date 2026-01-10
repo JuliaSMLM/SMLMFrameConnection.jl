@@ -37,6 +37,7 @@ function connect1DS(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}}, dataset::Int,
 
     # Extract relevant data for current dataset
     connectID_DS = connectID[currentDS] .+ maxID  # offset to ensure uniqueness
+    maxID = maximum(connectID_DS)  # Update maxID to avoid collision with new IDs
     framenum_DS = [emitters[i].frame for i in currentDS]
 
     # Loop through associated localizations and combine them as appropriate.
