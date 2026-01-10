@@ -296,7 +296,5 @@ function main()
     return results
 end
 
-# Run if executed directly
-if abspath(PROGRAM_FILE) == @__FILE__
-    main()
-end
+# Run benchmark
+main()
