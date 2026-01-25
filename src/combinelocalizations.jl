@@ -2,7 +2,7 @@ using SMLMData
 using StatsBase
 
 """
-    smld_combined = combinelocalizations(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}}) where T
+    smld_combined = combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.AbstractEmitter}
 
 Combine clustered localizations in `smld` into higher precision localizations.
 
@@ -11,7 +11,7 @@ This function combines localizations in `smld` that share the same value of
 track_id.  Localizations are combined assuming they arose from
 independent measurements of the same position with Gaussian errors.
 """
-function combinelocalizations(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}}) where T
+function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.AbstractEmitter}
     # Extract arrays from emitters
     emitters = smld.emitters
     connectID = [e.track_id for e in emitters]
@@ -36,14 +36,16 @@ function combinelocalizations(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}}) where
     nclusters = length(nperID)
 
     # Pre-allocate arrays for combined values
-    x_combined = Vector{T}(undef, nclusters)
-    y_combined = Vector{T}(undef, nclusters)
-    σ_x_combined = Vector{T}(undef, nclusters)
-    σ_y_combined = Vector{T}(undef, nclusters)
-    photons_combined = Vector{T}(undef, nclusters)
-    σ_photons_combined = Vector{T}(undef, nclusters)
-    bg_combined = Vector{T}(undef, nclusters)
-    σ_bg_combined = Vector{T}(undef, nclusters)
+    # Use emitter's native precision, not SMLD's type parameter
+    ET = typeof(first(emitters).x)
+    x_combined = Vector{ET}(undef, nclusters)
+    y_combined = Vector{ET}(undef, nclusters)
+    σ_x_combined = Vector{ET}(undef, nclusters)
+    σ_y_combined = Vector{ET}(undef, nclusters)
+    photons_combined = Vector{ET}(undef, nclusters)
+    σ_photons_combined = Vector{ET}(undef, nclusters)
+    bg_combined = Vector{ET}(undef, nclusters)
+    σ_bg_combined = Vector{ET}(undef, nclusters)
     connectID_combined = Vector{Int}(undef, nclusters)
     framenum_combined = Vector{Int}(undef, nclusters)
     datasetnum_combined = Vector{Int}(undef, nclusters)
@@ -66,9 +68,9 @@ function combinelocalizations(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}}) where
     end
 
     # Create new emitters for combined results
-    combined_emitters = Vector{SMLMData.Emitter2DFit{T}}(undef, nclusters)
+    combined_emitters = Vector{SMLMData.Emitter2DFit{ET}}(undef, nclusters)
     for nn in 1:nclusters
-        combined_emitters[nn] = SMLMData.Emitter2DFit{T}(
+        combined_emitters[nn] = SMLMData.Emitter2DFit{ET}(
             x_combined[nn], y_combined[nn],
             photons_combined[nn], bg_combined[nn],
             σ_x_combined[nn], σ_y_combined[nn],

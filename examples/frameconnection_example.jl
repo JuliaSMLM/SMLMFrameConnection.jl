@@ -95,7 +95,7 @@ println("  True molecules: $(length(unique(e.track_id for e in smld_truth.emitte
 
 # Run frame connection
 println("\nRunning frame connection...")
-smld_connected, smld_preclustered, smld_combined, params = frameconnect(
+result = frameconnect(
     smld_input;
     nnearestclusters = 2,
     nsigmadev = 5.0,
@@ -103,7 +103,7 @@ smld_connected, smld_preclustered, smld_combined, params = frameconnect(
     nmaxnn = 2
 )
 
-println("  Combined localizations: $(length(smld_combined.emitters))")
+println("  Combined localizations: $(length(result.combined.emitters))")
 
 # Compare with ideal result (using ground truth track_id)
 println("\nComputing ideal frame connection (ground truth)...")
@@ -112,14 +112,14 @@ println("  Ideal combined: $(length(smld_ideal_combined.emitters))")
 
 # Print estimated parameters
 println("\nEstimated photophysics parameters:")
-println("  k_on (dark→visible rate): $(round(params.k_on, digits=4)) /frame")
-println("  k_off (visible→dark rate): $(round(params.k_off, digits=4)) /frame")
-println("  k_bleach (bleaching rate): $(round(params.k_bleach, digits=4)) /frame")
-println("  p_miss (miss probability): $(round(params.p_miss, digits=4))")
+println("  k_on (dark→visible rate): $(round(result.params.k_on, digits=4)) /frame")
+println("  k_off (visible→dark rate): $(round(result.params.k_off, digits=4)) /frame")
+println("  k_bleach (bleaching rate): $(round(result.params.k_bleach, digits=4)) /frame")
+println("  p_miss (miss probability): $(round(result.params.p_miss, digits=4))")
 
 # Compute precision improvement
 input_σ = mean([e.σ_x for e in smld_input.emitters])
-combined_σ = mean([e.σ_x for e in smld_combined.emitters])
+combined_σ = mean([e.σ_x for e in result.combined.emitters])
 println("\nPrecision improvement:")
 println("  Mean input σ: $(round(input_σ * 1000, digits=1)) nm")
 println("  Mean combined σ: $(round(combined_σ * 1000, digits=1)) nm")

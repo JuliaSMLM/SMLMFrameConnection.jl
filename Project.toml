@@ -14,9 +14,9 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 [compat]
 Hungarian = "0.6, 0.7"
 NearestNeighbors = "0.4"
-Optim = "1"
+Optim = "1, 2"
 SMLMData = "0.5"
-StatsBase = "0.33"
+StatsBase = "0.33, 0.34"
 julia = "1.6"
 
 [extras]

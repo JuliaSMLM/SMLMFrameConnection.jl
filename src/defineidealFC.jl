@@ -1,9 +1,9 @@
 using SMLMData
 
 """
-    connect1DS(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}}, dataset::Int,
+    connect1DS(smld::BasicSMLD{T,E}, dataset::Int,
                connectID::Vector{Int}, maxID::Int;
-               maxframegap::Int = 5) where T
+               maxframegap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
 
 Define the "ideal" frame-connection result for simulated `smld` with one dataset.
 
@@ -23,9 +23,9 @@ call defineidealFC().
 # Returns
 - Updated connectID array and new maxID.
 """
-function connect1DS(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}}, dataset::Int,
+function connect1DS(smld::BasicSMLD{T,E}, dataset::Int,
                     connectID::Vector{Int}, maxID::Int;
-                    maxframegap::Int = 5) where T
+                    maxframegap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
     emitters = smld.emitters
 
     # Find indices for current dataset
@@ -84,8 +84,8 @@ end
 
 """
     smld_connected, smld_combined = defineidealFC(
-        smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}};
-        maxframegap::Int = 5) where T
+        smld::BasicSMLD{T,E};
+        maxframegap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
 
 Define the "ideal" frame-connection result for a simulated `smld`.
 
@@ -110,8 +110,8 @@ connected across datasets.
                     blinking event ID.
 - `smld_combined`: Ideal frame-connection result with localizations combined.
 """
-function defineidealFC(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}};
-                       maxframegap::Int = 5) where T
+function defineidealFC(smld::BasicSMLD{T,E};
+                       maxframegap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
     emitters = smld.emitters
 
     # Initialize connectID from track_id
@@ -130,10 +130,12 @@ function defineidealFC(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}};
     compress_connectID!(connectID)
 
     # Create new emitters with updated track_id
-    new_emitters = Vector{SMLMData.Emitter2DFit{T}}(undef, length(emitters))
+    # Use emitter's native precision, not SMLD's type parameter
+    ET = typeof(first(emitters).x)
+    new_emitters = Vector{SMLMData.Emitter2DFit{ET}}(undef, length(emitters))
     for i in 1:length(emitters)
         e = emitters[i]
-        new_emitters[i] = SMLMData.Emitter2DFit{T}(
+        new_emitters[i] = SMLMData.Emitter2DFit{ET}(
             e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
             e.frame, e.dataset, connectID[i], e.id
         )

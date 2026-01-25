@@ -2,8 +2,8 @@ using SMLMData
 using NearestNeighbors
 
 """
-    initialdensity = estimatedensities(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
-        clusterdata::Vector{Matrix{Float32}}, params::ParamStruct) where T
+    initialdensity = estimatedensities(smld::BasicSMLD{T,E},
+        clusterdata::Vector{Matrix{Float32}}, params::ParamStruct) where {T, E<:SMLMData.AbstractEmitter}
 
 Estimate local emitter densities for clusters in `smld` and `clusterdata`.
 
@@ -13,9 +13,9 @@ The initial local densities `initialdensity` around each pre-cluster present in
 throughout the entire set of data as well as some of the rate parameters
 provided in `params`.
 """
-function estimatedensities(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
+function estimatedensities(smld::BasicSMLD{T,E},
     clusterdata::Vector{Matrix{Float32}},
-    params::ParamStruct) where T
+    params::ParamStruct) where {T, E<:SMLMData.AbstractEmitter}
 
     # Define some new parameters.
     dutycycle = params.k_on / (params.k_on + params.k_off + params.k_bleach)
@@ -34,7 +34,7 @@ function estimatedensities(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
             initialdensity = 1.0
         else
             clusterarea = (maximum(clusterdata[1][:, 1]) - minimum(clusterdata[1][:, 1])) *
-                          (maximum(clusterdata[1][:, 1]) - minimum(clusterdata[1][:, 1]))
+                          (maximum(clusterdata[1][:, 2]) - minimum(clusterdata[1][:, 2]))
             initialdensity = (1 / clusterarea) *
                              ((params.k_bleach / params.k_off) / (1 - params.p_miss)) /
                              (1 - exp(-params.k_bleach * dutycycle * (maxframe - 1)))
@@ -79,8 +79,8 @@ function estimatedensities(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
         elseif !isempty(nonzero_dists)
             nndist[i] = maximum(nonzero_dists)
         else
-            # Fallback: use a small positive value to avoid Inf
-            nndist[i] = 0.01
+            # Fallback: use a reasonable distance in microns to avoid Inf
+            nndist[i] = 1.0
         end
     end
 

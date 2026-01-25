@@ -3,8 +3,8 @@ using Statistics
 using NearestNeighbors
 
 """
-    smld_preclustered = precluster(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
-        params::ParamStruct = ParamStruct()) where T
+    smld_preclustered = precluster(smld::BasicSMLD{T,E},
+        params::ParamStruct = ParamStruct()) where {T, E<:SMLMData.AbstractEmitter}
 
 Cluster localizations in `smld` based on distance and time thresholds in `params`.
 
@@ -22,8 +22,8 @@ same cluster.  This is done to prevent exclusion of the "correct" localization
 from its ideal cluster due to a previously included "incorrect" localization
 into that cluster.
 """
-function precluster(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
-                    params::ParamStruct = ParamStruct()) where T
+function precluster(smld::BasicSMLD{T,E},
+                    params::ParamStruct = ParamStruct()) where {T, E<:SMLMData.AbstractEmitter}
     # Extract arrays from emitters
     emitters = smld.emitters
     n_emitters = length(emitters)
@@ -124,10 +124,12 @@ function precluster(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
     connectID_compressed[sortindicesDS] = compress_connectID(connectID)
 
     # Create new emitters with track_id set
-    new_emitters = Vector{SMLMData.Emitter2DFit{T}}(undef, n_emitters)
+    # Use emitter's native precision, not SMLD's type parameter
+    ET = typeof(first(emitters).x)
+    new_emitters = Vector{SMLMData.Emitter2DFit{ET}}(undef, n_emitters)
     for i in 1:n_emitters
         e = emitters[i]
-        new_emitters[i] = SMLMData.Emitter2DFit{T}(
+        new_emitters[i] = SMLMData.Emitter2DFit{ET}(
             e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
             e.frame, e.dataset, connectID_compressed[i], e.id
         )

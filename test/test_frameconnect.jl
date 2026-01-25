@@ -5,12 +5,15 @@
             [make_emitter(Float64(i), Float64(i), j) for i in 1:5 for j in 1:3]...
         )
         smld = make_test_smld(emitters; n_frames=3)
-        smld_connected, smld_preclustered, smld_combined, params = frameconnect(smld)
+        result = frameconnect(smld)
 
-        @test smld_connected isa BasicSMLD
-        @test smld_preclustered isa BasicSMLD
-        @test smld_combined isa BasicSMLD
-        @test params isa ParamStruct
+        @test result isa NamedTuple
+        @test haskey(result, :combined)
+        @test haskey(result, :connected)
+        @test haskey(result, :params)
+        @test result.combined isa BasicSMLD
+        @test result.connected isa BasicSMLD
+        @test result.params isa ParamStruct
     end
 
     @testset "single molecule connection" begin
@@ -22,11 +25,11 @@
         )
         smld = make_test_smld(emitters; n_frames=5)
 
-        _, _, smld_combined, _ = frameconnect(smld; maxframegap=5, nnearestclusters=1)
+        result = frameconnect(smld; maxframegap=5, nnearestclusters=1)
 
         # Target molecule should be combined (may have 5 background singles)
         # At minimum, we should have fewer emitters than input
-        @test length(smld_combined.emitters) < length(smld.emitters)
+        @test length(result.combined.emitters) < length(smld.emitters)
     end
 
     @testset "multiple separated molecules" begin
@@ -39,11 +42,11 @@
         )
         smld = make_test_smld(emitters; n_frames=3)
 
-        _, _, smld_combined, _ = frameconnect(smld; maxframegap=5)
+        result = frameconnect(smld; maxframegap=5)
 
         # Should combine into ~4 molecules (fewer than 12 input emitters)
-        @test length(smld_combined.emitters) <= 8
-        @test length(smld_combined.emitters) < length(smld.emitters)
+        @test length(result.combined.emitters) <= 8
+        @test length(result.combined.emitters) < length(smld.emitters)
     end
 
     @testset "track_id population" begin
@@ -54,10 +57,10 @@
         )
         smld = make_test_smld(emitters; n_frames=3)
 
-        smld_connected, _, _, _ = frameconnect(smld)
+        result = frameconnect(smld)
 
         # All emitters should have non-zero track_id
-        for e in smld_connected.emitters
+        for e in result.connected.emitters
             @test e.track_id > 0
         end
     end
@@ -71,14 +74,14 @@
         )
         smld = make_test_smld(emitters; n_frames=3)
 
-        _, _, _, params = frameconnect(smld)
+        result = frameconnect(smld)
 
         # Parameters should be estimated (non-default values)
-        @test params.k_on >= 0
-        @test params.k_off >= 0
-        @test params.k_bleach >= 0
-        @test 0 <= params.p_miss <= 1
-        @test !isempty(params.initialdensity)
+        @test result.params.k_on >= 0
+        @test result.params.k_off >= 0
+        @test result.params.k_bleach >= 0
+        @test 0 <= result.params.p_miss <= 1
+        @test !isempty(result.params.initialdensity)
     end
 
     @testset "respects maxframegap" begin
@@ -92,10 +95,10 @@
         smld = make_test_smld(emitters; n_frames=12)
 
         # With maxframegap=5, the two groups at (5,5) should NOT connect
-        _, _, smld_combined, _ = frameconnect(smld; maxframegap=5)
+        result = frameconnect(smld; maxframegap=5)
 
         # Should have at least 3 combined localizations (2 for split molecule + 2 background)
-        @test length(smld_combined.emitters) >= 3
+        @test length(result.combined.emitters) >= 3
     end
 
     @testset "single localization" begin
@@ -103,21 +106,20 @@
         emitters = [make_emitter(5.0, 5.0, 1)]
         smld = make_test_smld(emitters; n_frames=1)
 
-        smld_connected, _, smld_combined, params = frameconnect(smld)
+        result = frameconnect(smld)
 
-        @test length(smld_combined.emitters) == 1
-        @test smld_combined.emitters[1].x ≈ 5.0 atol=1e-10
+        @test length(result.combined.emitters) == 1
+        @test result.combined.emitters[1].x ≈ 5.0 atol=1e-10
     end
 
     @testset "preserves camera and metadata" begin
         smld = make_single_molecule_smld()
 
-        smld_connected, smld_preclustered, smld_combined, _ = frameconnect(smld)
+        result = frameconnect(smld)
 
-        @test smld_connected.camera == smld.camera
-        @test smld_preclustered.camera == smld.camera
-        @test smld_combined.camera == smld.camera
-        @test smld_connected.n_datasets == smld.n_datasets
+        @test result.connected.camera == smld.camera
+        @test result.combined.camera == smld.camera
+        @test result.connected.n_datasets == smld.n_datasets
     end
 
     @testset "precision improvement" begin
@@ -134,10 +136,10 @@
         emitters = vcat(target_emitters, background)
         smld = make_test_smld(emitters; n_frames=n_locs)
 
-        _, _, smld_combined, _ = frameconnect(smld; maxframegap=n_locs, nnearestclusters=1)
+        result = frameconnect(smld; maxframegap=n_locs, nnearestclusters=1)
 
         # Find the combined target molecule (around position 5,5)
-        target_combined = filter(e -> e.x < 10.0 && e.y < 10.0, smld_combined.emitters)
+        target_combined = filter(e -> e.x < 10.0 && e.y < 10.0, result.combined.emitters)
         @test length(target_combined) == 1
 
         σ_output = target_combined[1].σ_x
@@ -150,16 +152,16 @@
     @testset "custom parameters" begin
         smld = make_single_molecule_smld()
 
-        _, _, _, params = frameconnect(smld;
+        result = frameconnect(smld;
             nnearestclusters=3,
             nsigmadev=4.0,
             maxframegap=10,
             nmaxnn=3
         )
 
-        @test params.nnearestclusters == 3
-        @test params.nsigmadev == 4.0
-        @test params.maxframegap == 10
-        @test params.nmaxnn == 3
+        @test result.params.nnearestclusters == 3
+        @test result.params.nsigmadev == 4.0
+        @test result.params.maxframegap == 10
+        @test result.params.nmaxnn == 3
     end
 end

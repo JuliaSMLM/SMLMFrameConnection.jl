@@ -162,7 +162,7 @@ function profile_detailed(; n_molecules::Int = 50, n_frames::Int = 100)
     println("-" ^ 70)
 
     GC.gc()
-    @time smld_connected, smld_preclustered, smld_combined, params = frameconnect(
+    @time result = frameconnect(
         smld;
         nnearestclusters = 2,
         nsigmadev = 5.0,
@@ -171,16 +171,15 @@ function profile_detailed(; n_molecules::Int = 50, n_frames::Int = 100)
     )
 
     println("\nOutput:")
-    println("  Preclusters: $(length(unique(e.track_id for e in smld_preclustered.emitters)))")
-    println("  Final tracks: $(length(unique(e.track_id for e in smld_connected.emitters)))")
-    println("  Combined emitters: $(length(smld_combined.emitters))")
+    println("  Final tracks: $(length(unique(e.track_id for e in result.connected.emitters)))")
+    println("  Combined emitters: $(length(result.combined.emitters))")
 
     # Precision improvement
     input_σ = mean([e.σ_x for e in smld.emitters])
-    combined_σ = mean([e.σ_x for e in smld_combined.emitters])
+    combined_σ = mean([e.σ_x for e in result.combined.emitters])
     println("\nPrecision improvement: $(round(input_σ / combined_σ, digits=2))x")
 
-    return smld, smld_combined, params
+    return smld, result
 end
 
 #=

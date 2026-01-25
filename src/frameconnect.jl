@@ -1,10 +1,9 @@
 using SMLMData
 
 """
-    smld_connected, smld_preclustered, smld_combined, params = frameconnect(
-        smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}};
+    result = frameconnect(smld::BasicSMLD{T,E};
         nnearestclusters::Int=2, nsigmadev::Float64=5.0,
-        maxframegap::Int=5, nmaxnn::Int=2) where T
+        maxframegap::Int=5, nmaxnn::Int=2) where {T, E<:SMLMData.AbstractEmitter}
 
 Connect repeated localizations of the same emitter in `smld`.
 
@@ -18,7 +17,7 @@ using their MLE position estimate assuming Gaussian noise.
 
 # Inputs
 - `smld`: BasicSMLD containing the localizations that should be connected.
-          Must contain Emitter2DFit emitters with valid position uncertainties.
+          Must contain emitters with valid position uncertainties (σ_x, σ_y).
 - `nnearestclusters`: Number of nearest preclusters used for local density
                       estimates. (default = 2)(see estimatedensities())
 - `nsigmadev`: Multiplier of localization errors that defines a pre-clustering
@@ -30,20 +29,19 @@ using their MLE position estimate assuming Gaussian noise.
             feasible for most data. (default = 2)(see precluster())
 
 # Outputs
-- `smld_connected`: Input `smld` with track_id field updated to reflect connected
-                    localizations (localizations remain uncombined).
-- `smld_preclustered`: Copy of the input `smld` with the track_id field
-                       populated to reflect the results of pre-clustering.
-- `smld_combined`: Final frame-connection result (i.e., `smld` with
-                   localizations that seem to be from the same blinking event
-                   combined into higher precision localizations).
+Returns a NamedTuple with fields:
+- `combined`: Final frame-connection result (i.e., `smld` with localizations that
+              seem to be from the same blinking event combined into higher
+              precision localizations).
+- `connected`: Input `smld` with track_id field updated to reflect connected
+               localizations (localizations remain uncombined).
 - `params`: Structure of parameters used in the algorithm, with some copied
             directly from the option kwargs to this function, and others
             calculated internally (see SMLMFrameConnection.ParamStruct).
 """
-function frameconnect(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}};
+function frameconnect(smld::BasicSMLD{T,E};
     nnearestclusters::Int = 2, nsigmadev::Float64 = 5.0,
-    maxframegap::Int = 5, nmaxnn::Int = 2) where T
+    maxframegap::Int = 5, nmaxnn::Int = 2) where {T, E<:SMLMData.AbstractEmitter}
 
     # Prepare a ParamStruct to keep track of parameters used.
     params = ParamStruct()
@@ -74,11 +72,13 @@ function frameconnect(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}};
         clusterdata, params, nframes)
 
     # Create smld_connected with updated track_id
+    # Use emitter's native precision, not SMLD's type parameter
     emitters = smld.emitters
-    new_emitters = Vector{SMLMData.Emitter2DFit{T}}(undef, length(emitters))
+    ET = typeof(first(emitters).x)  # Get precision from emitter fields
+    new_emitters = Vector{SMLMData.Emitter2DFit{ET}}(undef, length(emitters))
     for i in 1:length(emitters)
         e = emitters[i]
-        new_emitters[i] = SMLMData.Emitter2DFit{T}(
+        new_emitters[i] = SMLMData.Emitter2DFit{ET}(
             e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
             e.frame, e.dataset, connectID_final[i], e.id
         )
@@ -89,5 +89,5 @@ function frameconnect(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}};
     # Combine the connected localizations into higher precision localizations.
     smld_combined = combinelocalizations(smld_connected)
 
-    return smld_connected, smld_preclustered, smld_combined, params
+    return (combined=smld_combined, connected=smld_connected, params=params)
 end

@@ -1,7 +1,7 @@
 using SMLMData
 
 """
-    clusterdata = organizeclusters(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}}) where T
+    clusterdata = organizeclusters(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.AbstractEmitter}
 
 Organize pre-clusters into a vector indexing distinct clusters.
 
@@ -10,7 +10,7 @@ Pre-clusters in the input `smld`, as related by their shared integer value of
 `track_id`, are organized into a vector of matrices `clusterdata`.  Each
 index of `clusterdata` corresponds to a distinct cluster.
 """
-function organizeclusters(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}}) where T
+function organizeclusters(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.AbstractEmitter}
     # Extract arrays from emitters
     emitters = smld.emitters
     connectID = [e.track_id for e in emitters]

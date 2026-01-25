@@ -4,8 +4,8 @@ using Statistics
 
 """
     k_on, k_off, k_bleach, p_miss, nemitters =
-        estimateparams(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
-                       clusterdata::Vector{Matrix{Float32}}) where T
+        estimateparams(smld::BasicSMLD{T,E},
+                       clusterdata::Vector{Matrix{Float32}}) where {T, E<:SMLMData.AbstractEmitter}
 
 Estimate rate parameters from the clusters in `smld` and `clusterdata`.
 
@@ -22,8 +22,8 @@ Super-Resolution Localizations via Linear Assignment Problem",
 Front. Bioinform., 20 October 2021
 https://doi.org/10.3389/fbinf.2021.724325
 """
-function estimateparams(smld::BasicSMLD{T,SMLMData.Emitter2DFit{T}},
-    clusterdata::Vector{Matrix{Float32}}) where T
+function estimateparams(smld::BasicSMLD{T,E},
+    clusterdata::Vector{Matrix{Float32}}) where {T, E<:SMLMData.AbstractEmitter}
 
     # Extract frame numbers from emitters
     framenum = [e.frame for e in smld.emitters]

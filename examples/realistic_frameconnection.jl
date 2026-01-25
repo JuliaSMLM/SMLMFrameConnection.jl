@@ -21,10 +21,10 @@ Key parameters from @sim:
 - simulate() returns BasicSMLD with Emitter2DFit, track_id is ground truth
 - Rates are per-second in SMLMSim, per-frame in frameconnect output
 
-For realistic frame connection testing:
-- k_off = 2-5 Hz (longer blinks than default k_off=50)
-- k_on = 0.2-0.5 Hz (reasonable reblinking)
-- Density 0.5-2 emitters/μm²
+For realistic dSTORM:
+- k_off = 2-5 Hz (blink duration)
+- k_on = 0.01-0.05 Hz (dark time, gives 0.1-1% duty cycle)
+- Density 10-100 emitters/μm²
 =#
 
 function main()
@@ -40,16 +40,16 @@ function main()
 
     # Blinking kinetics (2-state model: on/off)
     # - k_off = 3 Hz → mean on-time ~333ms
-    # - k_on = 0.3 Hz → mean off-time ~3.3s
+    # - k_on = 0.03 Hz → mean off-time ~33s → ~1% duty cycle
     fluor = GenericFluor(;
         photons = 5000.0,    # Emission rate affects photon counts
         k_off = 3.0,         # On→off rate (Hz)
-        k_on = 0.3           # Off→on rate (Hz)
+        k_on = 0.03          # Off→on rate (Hz) → 1% duty cycle
     )
 
     # Simulation parameters
     params = StaticSMLMParams(
-        density = 1.0,        # Emitters per μm² (patterns, not molecules)
+        density = 20.0,       # Emitters per μm² (realistic dSTORM)
         σ_psf = 0.13,         # PSF width (μm) → precision = σ_psf/√photons
         minphotons = 100,     # Detection threshold
         nframes = 1000,       # Number of acquisition frames
@@ -67,8 +67,10 @@ function main()
     @printf("  PSF σ:           %.0f nm\n", params.σ_psf * 1000)
 
     println("\n  Blinking kinetics:")
+    duty_cycle = 0.03 / (0.03 + 3.0) * 100
     @printf("    k_off:  %.1f Hz (mean on-time %.0f ms)\n", 3.0, 1000/3.0)
-    @printf("    k_on:   %.2f Hz (mean off-time %.1f s)\n", 0.3, 1/0.3)
+    @printf("    k_on:   %.2f Hz (mean off-time %.0f s)\n", 0.03, 1/0.03)
+    @printf("    Duty cycle: %.1f%%\n", duty_cycle)
 
     # =========================================================================
     # 2. Run simulation
@@ -115,14 +117,17 @@ function main()
     println("-" ^ 70)
 
     stats = @timed begin
-        smld_connected, smld_preclustered, smld_combined, fc_params = frameconnect(
+        frameconnect(
             smld_input;
             nnearestclusters = 2,
             nsigmadev = 5.0,
-            maxframegap = 10,  # Allow gaps since k_on=0.3 means reblinking
+            maxframegap = 10,  # Allow gaps since k_on=0.03 means reblinking
             nmaxnn = 2
         )
     end
+
+    result = stats.value
+    fc_params = result.params
 
     @printf("  Time:        %.2f seconds\n", stats.time)
     @printf("  Allocations: %.1f MB\n", stats.bytes / 1e6)
@@ -130,13 +135,12 @@ function main()
     # =========================================================================
     # 5. Results summary
     # =========================================================================
-    n_tracks = length(unique(e.track_id for e in smld_connected.emitters))
-    n_combined = length(smld_combined.emitters)
+    n_tracks = length(unique(e.track_id for e in result.connected.emitters))
+    n_combined = length(result.combined.emitters)
 
     println("\n5. Frame Connection Results")
     println("-" ^ 70)
     @printf("  Input localizations:  %d\n", length(smld_input.emitters))
-    @printf("  Preclusters:          %d\n", length(unique(e.track_id for e in smld_preclustered.emitters)))
     @printf("  Connected tracks:     %d\n", n_tracks)
     @printf("  Combined emitters:    %d\n", n_combined)
     @printf("  Reduction ratio:      %.1fx\n", length(smld_input.emitters) / n_combined)
@@ -149,13 +153,13 @@ function main()
 
     # True per-frame rates (convert from Hz to per-frame at framerate)
     dt = 1.0 / params.framerate
-    true_k_off_pf = 1 - exp(-3.0 * dt)   # k_off=3 Hz
-    true_k_on_pf = 1 - exp(-0.3 * dt)    # k_on=0.3 Hz
+    true_k_off_pf = 1 - exp(-3.0 * dt)    # k_off=3 Hz
+    true_k_on_pf = 1 - exp(-0.03 * dt)    # k_on=0.03 Hz
 
     println("  Parameter    True (Hz)    Estimated (/frame)    True (/frame)")
     println("  " * "-" ^ 60)
-    @printf("  k_on         %.2f         %.4f                %.4f\n",
-            0.3, fc_params.k_on, true_k_on_pf)
+    @printf("  k_on         %.2f         %.4f                %.6f\n",
+            0.03, fc_params.k_on, true_k_on_pf)
     @printf("  k_off        %.2f         %.4f                %.4f\n",
             3.0, fc_params.k_off, true_k_off_pf)
     @printf("  k_bleach     N/A          %.5f                N/A (2-state model)\n",
@@ -169,8 +173,8 @@ function main()
     println("-" ^ 70)
 
     input_σ = mean([e.σ_x for e in smld_input.emitters])
-    combined_σ = mean([e.σ_x for e in smld_combined.emitters])
-    avg_locs_per_track = length(smld_connected.emitters) / n_tracks
+    combined_σ = mean([e.σ_x for e in result.combined.emitters])
+    avg_locs_per_track = length(result.connected.emitters) / n_tracks
     theoretical_improvement = sqrt(avg_locs_per_track)
 
     @printf("  Mean input σ:         %.1f nm\n", input_σ * 1000)
@@ -205,7 +209,7 @@ function main()
     println("Example complete!")
     println("=" ^ 70)
 
-    return smld_input, smld_combined, fc_params, smld_noisy
+    return smld_input, result, smld_noisy
 end
 
 # Run
