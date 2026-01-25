@@ -81,9 +81,11 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
     for nn in indices
         deltaframe_past = minimum([maxframegap; framesint[nn]-startframe])
         deltaframe_future = minimum([maxframegap; nframes-framesint[nn]])
+        # Localization uncertainty area (μm²) to make density dimensionless
+        loc_area = pi * x_se[nn] * y_se[nn]
         birthcost = -log(1-p_miss) -
-            log(rho_off[framesint[nn]]*(1-exp(-k_on))*exp(-deltaframe_past*k_on)+
-            rho_on[framesint[nn]-deltaframe_past]*(p_miss^deltaframe_past))
+            log(rho_off[framesint[nn]] * loc_area * (1-exp(-k_on)) * exp(-deltaframe_past*k_on) +
+                rho_on[framesint[nn]-deltaframe_past] * loc_area * (p_miss^deltaframe_past))
         deathcost = -log((1-exp(-k_off)) +
             (1-exp(-k_bleach)) +
             (p_miss^deltaframe_future))

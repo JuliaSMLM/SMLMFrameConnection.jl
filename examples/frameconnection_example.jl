@@ -1,65 +1,133 @@
-# Example script for basic frame connection class usage.
+# Example script for basic frame connection usage.
+#
+# This example demonstrates:
+# 1. Creating synthetic SMLM data with blinking molecules
+# 2. Running frame connection to combine repeated localizations
+# 3. Comparing results with ground truth
 
 using SMLMFrameConnection
-using SMLMSim
 using SMLMData
-using ImageView
+using Random
+using Statistics
 
+# Set random seed for reproducibility
+Random.seed!(42)
 
-## Simulate some data using SMLMSim.
-# Define simulation parameters.
-# NOTE: Care must be taken to maintain unit conventions - SMLMSim works in
-#       physical units, but here we're maintaining units of pixels and frames.
-γ = 1e3 # emission rate, photons/frame
-q = [0.0 0.5
-    1.0e-3 0.0] # kinetic transmissions (1/frame): [on->on, on->off; off->on, off->off]
-fluor = SMLMSim.GenericFluor(; γ = γ, q = q)
-pattern = SMLMSim.Point2D()
-ρ = 5.0 # emitters / pixel^2
-xsize = 8 # pixels
-ysize = 8
-pixelsize = 1.0 # 1.0 to keep units of pixels
-framerate = 1.0 # 1.0 to keep units of frames
-nframes = 10000
-ndatasets = 1 # for now, must be 1 due to unresolved bug in defineidealFC()
+#=
+Generate synthetic blinking molecule data.
 
-# Generate the simulation
-smld_true, smld_model, smld_noisy = SMLMSim.sim(;
-    ρ = ρ,
-    σ_PSF = 1.3,
-    minphotons = 50,
-    ndatasets = ndatasets,
-    nframes = nframes,
-    framerate = framerate,
-    pattern = pattern,
-    molecule = fluor,
-    camera = SMLMSim.IdealCamera(; xpixels = xsize, ypixels = ysize, pixelsize = pixelsize)
+We simulate multiple molecules, each blinking across several frames with:
+- Gaussian-distributed position noise (localization uncertainty)
+- Variable photon counts
+- Random blinking patterns
+=#
+
+function generate_synthetic_smld(;
+    n_molecules::Int = 20,
+    n_frames::Int = 100,
+    fov_size::Float64 = 10.0,    # μm
+    σ_loc::Float64 = 0.02,       # localization uncertainty (μm)
+    p_on::Float64 = 0.3,         # probability of being "on" each frame
+    mean_photons::Float64 = 1000.0
+)
+    emitters = Emitter2DFit{Float64}[]
+
+    # Generate random molecule positions
+    mol_x = fov_size * rand(n_molecules)
+    mol_y = fov_size * rand(n_molecules)
+
+    for mol_id in 1:n_molecules
+        true_x, true_y = mol_x[mol_id], mol_y[mol_id]
+
+        for frame in 1:n_frames
+            # Random blinking - molecule is "on" with probability p_on
+            if rand() < p_on
+                # Add localization noise
+                obs_x = true_x + σ_loc * randn()
+                obs_y = true_y + σ_loc * randn()
+
+                # Random photon count
+                photons = mean_photons * (0.5 + rand())
+                σ_photons = sqrt(photons)
+
+                # Create emitter with track_id = mol_id (ground truth)
+                e = Emitter2DFit{Float64}(
+                    obs_x, obs_y,
+                    photons, 10.0,           # photons, bg
+                    σ_loc, σ_loc,            # σ_x, σ_y
+                    σ_photons, 3.0,          # σ_photons, σ_bg
+                    frame, 1, mol_id, 0      # frame, dataset, track_id, id
+                )
+                push!(emitters, e)
+            end
+        end
+    end
+
+    # Create camera and SMLD
+    cam = IdealCamera(1:512, 1:512, 0.1)  # 0.1 μm pixels
+
+    # Reset track_id to 0 for input (algorithm will populate it)
+    input_emitters = [Emitter2DFit{Float64}(
+        e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
+        e.frame, e.dataset, 0, e.id  # track_id = 0
+    ) for e in emitters]
+
+    smld_input = BasicSMLD(input_emitters, cam, n_frames, 1)
+
+    # Keep ground truth version
+    smld_truth = BasicSMLD(emitters, cam, n_frames, 1)
+
+    return smld_input, smld_truth, (mol_x, mol_y)
+end
+
+# Generate synthetic data
+println("Generating synthetic SMLM data...")
+smld_input, smld_truth, (true_x, true_y) = generate_synthetic_smld(
+    n_molecules = 20,
+    n_frames = 100,
+    fov_size = 5.0,
+    σ_loc = 0.02,
+    p_on = 0.4
 )
 
-# Populate some missing fields not added during the simulation.
-smld_noisy.bg = zeros(Float64, length(smld_noisy.framenum))
-smld_noisy.σ_bg = fill(Inf64, length(smld_noisy.framenum))
-smld_noisy.σ_photons = fill(Inf64, length(smld_noisy.framenum))
+println("  Input localizations: $(length(smld_input.emitters))")
+println("  True molecules: $(length(unique(e.track_id for e in smld_truth.emitters)))")
 
-# Perform frame connection.
-smld_connected, smld_preclustered, smld_combined, params = SMLMFrameConnection.frameconnect(smld_noisy;
-    nnearestclusters = 2, nsigmadev = 5.0,
-    maxframegap = 5, nmaxnn = 2)
+# Run frame connection
+println("\nRunning frame connection...")
+result = frameconnect(
+    smld_input;
+    nnearestclusters = 2,
+    nsigmadev = 5.0,
+    maxframegap = 5,
+    nmaxnn = 2
+)
 
-## Make some circle images of the results (circle radii indicate localization 
-## precision).
-# Plot the combined results overlain with the original data:
-#   Original data shown in magenta, combined results in green.
-mag = 100.0 # image magnification
-circleim_original = SMLMData.makecircleim(smld_noisy, mag)
-circleim_combined = SMLMData.makecircleim(smld_combined, mag)
-ImageView.imshow(ImageView.RGB.(circleim_original, circleim_combined, circleim_original))
+println("  Combined localizations: $(length(result.combined.emitters))")
 
-# Plot the "ideal" result (all localizations of same emitter w/in 5 frames are
-# combined) overlain with the LAP-FC result:
-#   Ideal result shown in magenta, LAP-FC results in green
-#   -> white circles indicate "ideal" performance of LAP-FC
-smld_idealconnected, smld_idealcombined =
-    SMLMFrameConnection.defineidealFC(smld_noisy; maxframegap = 5)
-circleim_ideal = SMLMData.makecircleim(smld_idealcombined, mag)
-ImageView.imshow(ImageView.RGB.(circleim_ideal, circleim_combined, circleim_ideal))
+# Compare with ideal result (using ground truth track_id)
+println("\nComputing ideal frame connection (ground truth)...")
+smld_ideal_connected, smld_ideal_combined = defineidealFC(smld_truth; maxframegap = 5)
+println("  Ideal combined: $(length(smld_ideal_combined.emitters))")
+
+# Print estimated parameters
+println("\nEstimated photophysics parameters:")
+println("  k_on (dark→visible rate): $(round(result.params.k_on, digits=4)) /frame")
+println("  k_off (visible→dark rate): $(round(result.params.k_off, digits=4)) /frame")
+println("  k_bleach (bleaching rate): $(round(result.params.k_bleach, digits=4)) /frame")
+println("  p_miss (miss probability): $(round(result.params.p_miss, digits=4))")
+
+# Compute precision improvement
+input_σ = mean([e.σ_x for e in smld_input.emitters])
+combined_σ = mean([e.σ_x for e in result.combined.emitters])
+println("\nPrecision improvement:")
+println("  Mean input σ: $(round(input_σ * 1000, digits=1)) nm")
+println("  Mean combined σ: $(round(combined_σ * 1000, digits=1)) nm")
+println("  Improvement factor: $(round(input_σ / combined_σ, digits=2))x")
+
+# Summary statistics
+n_unique_tracks = length(unique(e.track_id for e in smld_connected.emitters))
+avg_locs_per_track = length(smld_connected.emitters) / n_unique_tracks
+println("\nConnection statistics:")
+println("  Unique tracks identified: $n_unique_tracks")
+println("  Avg localizations per track: $(round(avg_locs_per_track, digits=1))")

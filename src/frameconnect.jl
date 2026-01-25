@@ -1,8 +1,9 @@
 using SMLMData
 
 """
-    smld, smld_preclustered, smld_combined, params = frameconnect!(smld::SMLMData.SMLD2D; 
-        nnearestclusters::Int=2, nsigmadev::Float64=5.0, maxframegap::Int=5, nmaxnn::Int=2)
+    result = frameconnect(smld::BasicSMLD{T,E};
+        nnearestclusters::Int=2, nsigmadev::Float64=5.0,
+        maxframegap::Int=5, nmaxnn::Int=2) where {T, E<:SMLMData.AbstractEmitter}
 
 Connect repeated localizations of the same emitter in `smld`.
 
@@ -10,38 +11,37 @@ Connect repeated localizations of the same emitter in `smld`.
 Repeated localizations of the same emitter present in `smld` are connected and
 combined into higher precision localizations of that emitter.  This is done by
 1) forming pre-clusters of localizations, 2) estimating rate parameters from
-the pre-clusters, 3) solving a linear assignment problem for connecting 
+the pre-clusters, 3) solving a linear assignment problem for connecting
 localizations in each pre-cluster, and 4) combining the connected localizations
 using their MLE position estimate assuming Gaussian noise.
 
 # Inputs
-- `smld`: SMLD2D structure containing the localizations that should be 
-          connected (see SMLMData.SMLD2D for organization/fields).
-- `nnearestclusters`: Number of nearest preclusters used for local density 
+- `smld`: BasicSMLD containing the localizations that should be connected.
+          Must contain emitters with valid position uncertainties (σ_x, σ_y).
+- `nnearestclusters`: Number of nearest preclusters used for local density
                       estimates. (default = 2)(see estimatedensities())
 - `nsigmadev`: Multiplier of localization errors that defines a pre-clustering
-               distance threshold. (default = 5)(see precluster())(pixels)
+               distance threshold. (default = 5)(see precluster())(microns)
 - `maxframegap`: Maximum frame gap between temporally adjacent localizations in
                  a precluster. (default = 5)(see precluster())(frames)
-- `nmaxnn`: Maximum number of nearest-neighbors inspected for precluster 
+- `nmaxnn`: Maximum number of nearest-neighbors inspected for precluster
             membership.  Ideally, this would be set to inf, but that's not
             feasible for most data. (default = 2)(see precluster())
 
 # Outputs
-- `smld`: Input `smld` with field connectID updated to reflect connected
-          localizations (however localizations remain uncombined).
-- `smld_preclustered`: Copy of the input `smld` with the field connectID
-                       populated to reflect the results of pre-clustering.
-- `smld_combined`: Final frame-connection result (i.e., `smld` with 
-                   localizations that seem to be from the same blinking event
-                   combined into higher precision localizations).
-- `params`: Structure of parameters used in the algorithm, with some copied 
-            directly from the option kwargs to this function, and others 
+Returns a NamedTuple with fields:
+- `combined`: Final frame-connection result (i.e., `smld` with localizations that
+              seem to be from the same blinking event combined into higher
+              precision localizations).
+- `connected`: Input `smld` with track_id field updated to reflect connected
+               localizations (localizations remain uncombined).
+- `params`: Structure of parameters used in the algorithm, with some copied
+            directly from the option kwargs to this function, and others
             calculated internally (see SMLMFrameConnection.ParamStruct).
 """
-function frameconnect!(smld::SMLMData.SMLD2D;
+function frameconnect(smld::BasicSMLD{T,E};
     nnearestclusters::Int = 2, nsigmadev::Float64 = 5.0,
-    maxframegap::Int = 5, nmaxnn::Int = 2)
+    maxframegap::Int = 5, nmaxnn::Int = 2) where {T, E<:SMLMData.AbstractEmitter}
 
     # Prepare a ParamStruct to keep track of parameters used.
     params = ParamStruct()
@@ -62,61 +62,32 @@ function frameconnect!(smld::SMLMData.SMLD2D;
     params.initialdensity =
         estimatedensities(smld_preclustered, clusterdata, params)
 
+    # Get nframes
+    nframes = smld.n_frames > 0 ? smld.n_frames : maximum(e.frame for e in smld.emitters)
+
     # Connect localizations in `smld` by solving the LAP.
-    nframes = isempty(smld.nframes) ? maximum(smld.framenum) : smld.nframes
-    smld.connectID = connectlocalizations(smld_preclustered.connectID,
+    # Extract track_id from preclustered emitters
+    connectID_precluster = [e.track_id for e in smld_preclustered.emitters]
+    connectID_final = connectlocalizations(connectID_precluster,
         clusterdata, params, nframes)
 
+    # Create smld_connected with updated track_id
+    # Use emitter's native precision, not SMLD's type parameter
+    emitters = smld.emitters
+    ET = typeof(first(emitters).x)  # Get precision from emitter fields
+    new_emitters = Vector{SMLMData.Emitter2DFit{ET}}(undef, length(emitters))
+    for i in 1:length(emitters)
+        e = emitters[i]
+        new_emitters[i] = SMLMData.Emitter2DFit{ET}(
+            e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
+            e.frame, e.dataset, connectID_final[i], e.id
+        )
+    end
+    smld_connected = BasicSMLD(new_emitters, smld.camera, smld.n_frames,
+                                smld.n_datasets, copy(smld.metadata))
+
     # Combine the connected localizations into higher precision localizations.
-    smld_combined = combinelocalizations(smld)
+    smld_combined = combinelocalizations(smld_connected)
 
-    return smld, smld_preclustered, smld_combined, params
-end
-
-"""
-    smld, smld_preclustered, smld_combined, params = frameconnect(smld::SMLMData.SMLD2D; 
-        nnearestclusters::Int=2, nsigmadev::Float64=5.0, maxframegap::Int=5, nmaxnn::Int=2)
-
-Connect repeated localizations of the same emitter in `smld`.
-
-# Description
-Repeated localizations of the same emitter present in `smld` are connected and
-combined into higher precision localizations of that emitter.  This is done by
-1) forming pre-clusters of localizations, 2) estimating rate parameters from
-the pre-clusters, 3) solving a linear assignment problem for connecting 
-localizations in each pre-cluster, and 4) combining the connected localizations
-using their MLE position estimate assuming Gaussian noise.
-
-# Inputs
--`smld`: SMLD2D structure containing the localizations that should be 
-         connected (see SMLMData.SMLD2D for organization/fields).
--`nnearestclusters`: Number of nearest preclusters used for local density 
-                     estimates. (default = 2)(see estimatedensities())
--`nsigmadev`: Multiplier of localization errors that defines a pre-clustering
-              distance threshold. (default = 5)(see precluster())(pixels)
--`maxframegap`: Maximum frame gap between temporally adjacent localizations in
-                a precluster. (default = 5)(see precluster())(frames)
--`nmaxnn`: Maximum number of nearest-neighbors inspected for precluster 
-           membership.  Ideally, this would be set to inf, but that's not
-           feasible for most data. (default = 2)(see precluster())
-
-# Outputs
--`smld`: Input `smld` with field connectID updated to reflect connected
-         localizations (however localizations remain uncombined).
--`smld_preclustered`: Copy of the input `smld` with the field connectID
-                      populated to reflect the results of pre-clustering.
--`smld_combined`: Final frame-connection result (i.e., `smld` with 
-                  localizations that seem to be from the same blinking event
-                  combined into higher precision localizations).
--`params`: Structure of parameters used in the algorithm, with some copied 
-           directly from the option kwargs to this function, and others 
-           calculated internally (see SMLMFrameConnection.ParamStruct).
-"""
-function frameconnect(smld::SMLMData.SMLD2D;
-    nnearestclusters::Int = 2, nsigmadev::Float64 = 5.0,
-    maxframegap::Int = 5, nmaxnn::Int = 2)
-
-    return frameconnect!(deepcopy(smld);
-        nnearestclusters = nnearestclusters, nsigmadev = nsigmadev,
-        maxframegap = maxframegap, nmaxnn = nmaxnn)
+    return (combined=smld_combined, connected=smld_connected, params=params)
 end

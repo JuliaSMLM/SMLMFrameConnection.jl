@@ -3,18 +3,18 @@ using Statistics
 using NearestNeighbors
 
 """
-    smld_preclustered = precluster(smld::SMLMData.SMLD2D, 
-        params::ParamStruct = ParamStruct())
+    smld_preclustered = precluster(smld::BasicSMLD{T,E},
+        params::ParamStruct = ParamStruct()) where {T, E<:SMLMData.AbstractEmitter}
 
 Cluster localizations in `smld` based on distance and time thresholds in `params`.
 
 # Description
-Localizations in the input structure `smd` are clustered together based on
-their spatiotemporal separations.  All localizations within a spatial 
-threshold of `params.nsigmadev*mean([smld.σ_x smld.σ_y)` and a temporal 
+Localizations in the input structure `smld` are clustered together based on
+their spatiotemporal separations.  All localizations within a spatial
+threshold of `params.nsigmadev*mean([σ_x σ_y])` and a temporal
 threshold of `params.maxframegap` of one another will be clustered together,
 meaning that these localizations now share the same unique integer value for
-smld.connectID.
+their track_id field.
 
 # Notes
 Pre-clustering allows localizations observed in the same frame to be in the
@@ -22,16 +22,27 @@ same cluster.  This is done to prevent exclusion of the "correct" localization
 from its ideal cluster due to a previously included "incorrect" localization
 into that cluster.
 """
-function precluster(smld::SMLMData.SMLD2D, params::ParamStruct = ParamStruct())
-    # Make a copy of smld, grab some of its fields (to improve speed), and
-    # sort w.r.t. framenum.
-    sortindicesDS = sortperm(smld.datasetnum)
-    framenum = smld.framenum[sortindicesDS]
-    datasetnum = smld.datasetnum[sortindicesDS]
-    xy = transpose([smld.x smld.y])
+function precluster(smld::BasicSMLD{T,E},
+                    params::ParamStruct = ParamStruct()) where {T, E<:SMLMData.AbstractEmitter}
+    # Extract arrays from emitters
+    emitters = smld.emitters
+    n_emitters = length(emitters)
+
+    framenum = [e.frame for e in emitters]
+    datasetnum = [e.dataset for e in emitters]
+    x = [e.x for e in emitters]
+    y = [e.y for e in emitters]
+    σ_x = [e.σ_x for e in emitters]
+    σ_y = [e.σ_y for e in emitters]
+
+    # Sort w.r.t. datasetnum
+    sortindicesDS = sortperm(datasetnum)
+    framenum = framenum[sortindicesDS]
+    datasetnum = datasetnum[sortindicesDS]
+    xy = transpose([x y])
     xy = xy[:, sortindicesDS]
-    σ_x = smld.σ_x[sortindicesDS]
-    σ_y = smld.σ_y[sortindicesDS]
+    σ_x = σ_x[sortindicesDS]
+    σ_y = σ_y[sortindicesDS]
     mean_se = Statistics.mean([σ_x σ_y]; dims = 2)
 
     # Isolate some parameters from params.
@@ -50,7 +61,7 @@ function precluster(smld::SMLMData.SMLD2D, params::ParamStruct = ParamStruct())
     ncumulativeDS = [0; cumsum(nperdataset)]
     maxID = nlocalizations
     for nn = 1:length(unique(datasetnum))
-        # Isolate some arrays for the nn-th dataset and sort w.r.t. their 
+        # Isolate some arrays for the nn-th dataset and sort w.r.t. their
         # framenum.
         currentindDS = (1:nperdataset[nn]) .+ ncumulativeDS[nn]
         sortindicesFN = sortperm(framenum[currentindDS])
@@ -108,12 +119,24 @@ function precluster(smld::SMLMData.SMLD2D, params::ParamStruct = ParamStruct())
         connectID[currentindDS] = deepcopy(connectIDCDS)
     end
 
-    # Store the updated connectID in the output structure, ensuring that the
-    # values range from 1:NClusters (which is expected by later codes).
-    smld_preclustered = deepcopy(smld)
-    smld_preclustered.connectID = 
-        Vector{Int}(undef, length(smld_preclustered.framenum))
-    smld_preclustered.connectID[sortindicesDS] = compress_connectID(connectID)
+    # Compress connectID to range from 1:NClusters
+    connectID_compressed = Vector{Int}(undef, nlocalizations)
+    connectID_compressed[sortindicesDS] = compress_connectID(connectID)
+
+    # Create new emitters with track_id set
+    # Use emitter's native precision, not SMLD's type parameter
+    ET = typeof(first(emitters).x)
+    new_emitters = Vector{SMLMData.Emitter2DFit{ET}}(undef, n_emitters)
+    for i in 1:n_emitters
+        e = emitters[i]
+        new_emitters[i] = SMLMData.Emitter2DFit{ET}(
+            e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
+            e.frame, e.dataset, connectID_compressed[i], e.id
+        )
+    end
+
+    smld_preclustered = BasicSMLD(new_emitters, smld.camera, smld.n_frames,
+                                   smld.n_datasets, copy(smld.metadata))
 
     return smld_preclustered
 end

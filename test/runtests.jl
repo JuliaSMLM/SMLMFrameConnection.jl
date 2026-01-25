@@ -1,6 +1,13 @@
-using SMLMFrameConnection
 using Test
+using SMLMFrameConnection
+using SMLMData
+
+# Load test fixtures
+include("test_helpers.jl")
 
 @testset "SMLMFrameConnection.jl" begin
-    # Write your tests here.
+    include("test_types.jl")
+    include("test_combinelocalizations.jl")
+    include("test_frameconnect.jl")
+    include("test_defineidealFC.jl")
 end
