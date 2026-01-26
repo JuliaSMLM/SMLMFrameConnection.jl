@@ -20,8 +20,8 @@
         # Two localizations at same position with same uncertainty
         σ = 0.02
         emitters = [
-            make_emitter(5.0, 5.0, 1; σ_xy=σ, track_id=1, photons=1000.0),
-            make_emitter(5.0, 5.0, 2; σ_xy=σ, track_id=1, photons=1200.0),
+            make_emitter(5.0, 5.0, 1; σ_pos=σ, track_id=1, photons=1000.0),
+            make_emitter(5.0, 5.0, 2; σ_pos=σ, track_id=1, photons=1200.0),
         ]
         smld = make_test_smld(emitters)
         result = combinelocalizations(smld)
@@ -49,8 +49,8 @@
         # Two localizations with different uncertainties
         # Weighted mean should favor lower uncertainty
         emitters = [
-            make_emitter(5.0, 5.0, 1; σ_xy=0.01, track_id=1),  # High precision
-            make_emitter(5.1, 5.1, 2; σ_xy=0.10, track_id=1),  # Low precision
+            make_emitter(5.0, 5.0, 1; σ_pos=0.01, track_id=1),  # High precision
+            make_emitter(5.1, 5.1, 2; σ_pos=0.10, track_id=1),  # Low precision
         ]
         smld = make_test_smld(emitters)
         result = combinelocalizations(smld)
@@ -68,9 +68,9 @@
     @testset "three localizations" begin
         σ = 0.02
         emitters = [
-            make_emitter(5.00, 5.00, 1; σ_xy=σ, track_id=1),
-            make_emitter(5.02, 5.02, 2; σ_xy=σ, track_id=1),
-            make_emitter(4.98, 4.98, 3; σ_xy=σ, track_id=1),
+            make_emitter(5.00, 5.00, 1; σ_pos=σ, track_id=1),
+            make_emitter(5.02, 5.02, 2; σ_pos=σ, track_id=1),
+            make_emitter(4.98, 4.98, 3; σ_pos=σ, track_id=1),
         ]
         smld = make_test_smld(emitters)
         result = combinelocalizations(smld)

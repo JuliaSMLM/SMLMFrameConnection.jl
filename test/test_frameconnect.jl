@@ -128,7 +128,7 @@
         σ_input = 0.02
 
         # Target molecule to test precision improvement
-        target_emitters = [make_emitter(5.0, 5.0, i; σ_xy=σ_input) for i in 1:n_locs]
+        target_emitters = [make_emitter(5.0, 5.0, i; σ_pos=σ_input) for i in 1:n_locs]
         # Background molecules for proper density estimation
         background = vcat(
             [make_emitter(Float64(20+i), Float64(20+i), 1) for i in 1:4]...

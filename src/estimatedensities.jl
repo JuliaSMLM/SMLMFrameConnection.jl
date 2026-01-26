@@ -43,18 +43,38 @@ function estimatedensities(smld::BasicSMLD{T,E},
     end
 
     # Determine the center of all clusters assuming each arose from the same
-    # emitter.
+    # emitter using precision-weighted mean with full covariance.
     clustercenters = zeros(2, nclusters)
     for nn = 1:nclusters
         # Isolate some arrays to improve readability.
+        # Column layout: 1:x 2:y 3:σ_x 4:σ_y 5:σ_xy 6:frame ...
         x = clusterdata[nn][:, 1]
         y = clusterdata[nn][:, 2]
         σ_x = clusterdata[nn][:, 3]
         σ_y = clusterdata[nn][:, 4]
+        σ_xy = clusterdata[nn][:, 5]
 
-        # Compute the cluster centers based on MLE of position.
-        clustercenters[1:2, nn] = [sum(x ./ σ_x .^ 2) / sum(1 ./ σ_x .^ 2)
-            sum(y ./ σ_y .^ 2) / sum(1 ./ σ_y .^ 2)]
+        # Compute the cluster centers using precision-weighted mean with full covariance.
+        # P = Σ⁻¹ = [σ_y² -σ_xy; -σ_xy σ_x²] / det where det = σ_x²σ_y² - σ_xy²
+        # Combined: center = (Σ Pᵢ)⁻¹ * Σ(Pᵢ * posᵢ)
+        P_sum = zeros(2, 2)
+        μ_weighted = zeros(2)
+        for i in eachindex(x)
+            det_i = σ_x[i]^2 * σ_y[i]^2 - σ_xy[i]^2
+            det_i = max(det_i, eps())  # Ensure positive definite
+            # Precision matrix elements
+            P11 = σ_y[i]^2 / det_i
+            P22 = σ_x[i]^2 / det_i
+            P12 = -σ_xy[i] / det_i
+            P_sum[1,1] += P11
+            P_sum[2,2] += P22
+            P_sum[1,2] += P12
+            P_sum[2,1] += P12
+            μ_weighted[1] += P11 * x[i] + P12 * y[i]
+            μ_weighted[2] += P12 * x[i] + P22 * y[i]
+        end
+        # Solve P_sum * center = μ_weighted
+        clustercenters[1:2, nn] = P_sum \ μ_weighted
     end
 
     # Estimate the local cluster density based on the distance to

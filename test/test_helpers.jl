@@ -12,12 +12,14 @@ function make_test_camera(; xpixels=512, ypixels=512, pixelsize=0.1)
 end
 
 """
-    make_emitter(x, y, frame; σ_xy=0.02, photons=1000.0, track_id=0)
+    make_emitter(x, y, frame; σ_pos=0.02, σ_xy_cov=0.0, photons=1000.0, track_id=0)
 
 Create a single Emitter2DFit for testing with sensible defaults.
+σ_pos is used for both σ_x and σ_y, σ_xy_cov is the x-y covariance.
 """
 function make_emitter(x::Real, y::Real, frame::Int;
-                      σ_xy::Real=0.02,
+                      σ_pos::Real=0.02,  # position uncertainty (used for both σ_x and σ_y)
+                      σ_xy_cov::Real=0.0,  # x-y covariance
                       photons::Real=1000.0,
                       bg::Real=10.0,
                       track_id::Int=0,
@@ -25,7 +27,8 @@ function make_emitter(x::Real, y::Real, frame::Int;
     return Emitter2DFit{Float64}(
         Float64(x), Float64(y),
         Float64(photons), Float64(bg),
-        Float64(σ_xy), Float64(σ_xy),
+        Float64(σ_pos), Float64(σ_pos),
+        Float64(σ_xy_cov),  # σ_xy covariance
         Float64(sqrt(photons)), Float64(sqrt(bg)),
         frame, dataset, track_id, 0
     )
@@ -45,20 +48,20 @@ function make_test_smld(emitters::Vector{<:Emitter2DFit};
 end
 
 """
-    make_blinking_molecule(x, y, frames; σ_xy=0.02, position_jitter=0.002)
+    make_blinking_molecule(x, y, frames; σ_pos=0.02, position_jitter=0.002)
 
 Create emitters representing a single molecule blinking across multiple frames.
 Uses deterministic small offsets to simulate localization uncertainty.
 """
 function make_blinking_molecule(x::Real, y::Real, frames::AbstractVector{Int};
-                                σ_xy::Real=0.02,
+                                σ_pos::Real=0.02,
                                 position_jitter::Real=0.002,
                                 track_id::Int=0)
     emitters = Emitter2DFit{Float64}[]
     for (i, f) in enumerate(frames)
         # Deterministic small offset pattern (not random for reproducibility)
         offset = position_jitter * ((i % 3) - 1)  # -jitter, 0, +jitter pattern
-        push!(emitters, make_emitter(x + offset, y + offset, f; σ_xy=σ_xy, track_id=track_id))
+        push!(emitters, make_emitter(x + offset, y + offset, f; σ_pos=σ_pos, track_id=track_id))
     end
     return emitters
 end
