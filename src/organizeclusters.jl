@@ -18,12 +18,14 @@ function organizeclusters(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.AbstractEm
     y = [e.y for e in emitters]
     σ_x = [e.σ_x for e in emitters]
     σ_y = [e.σ_y for e in emitters]
+    σ_xy = [e.σ_xy for e in emitters]
     framenum = [e.frame for e in emitters]
     datasetnum = [e.dataset for e in emitters]
 
     # Sort by connectID
+    # Column layout: 1:x 2:y 3:σ_x 4:σ_y 5:σ_xy 6:frame 7:dataset 8:connectID
     sortindices = sortperm(connectID)
-    combineddata = [x y σ_x σ_y framenum datasetnum connectID]
+    combineddata = [x y σ_x σ_y σ_xy framenum datasetnum connectID]
     combineddata = combineddata[sortindices, :]
 
     # Loop over preclusters and organize member localizations into a more

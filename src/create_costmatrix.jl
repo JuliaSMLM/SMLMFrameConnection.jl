@@ -20,11 +20,13 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
     params::ParamStruct, clusterind::Int64, nframes::Int64)
     # Extract some entries from clusterdata and params to make the code more
     # readable.
+    # Column layout: 1:x 2:y 3:σ_x 4:σ_y 5:σ_xy 6:frame 7:dataset 8:connectID 9:sortindex
     x = clusterdata[clusterind][:, 1]
     y = clusterdata[clusterind][:, 2]
     x_se = clusterdata[clusterind][:, 3]
     y_se = clusterdata[clusterind][:, 4]
-    framenum = clusterdata[clusterind][:, 5]
+    xy_cov = clusterdata[clusterind][:, 5]
+    framenum = clusterdata[clusterind][:, 6]
     k_on = params.k_on
     k_off = params.k_off
     k_bleach = params.k_bleach
@@ -54,11 +56,19 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
             #       needed.
             continue
         end
-        sigma_x = sqrt(x_se[mm]^2 + x_se[nn]^2)
-        sigma_y = sqrt(y_se[mm]^2 + y_se[nn]^2)
-        separationcost = (log(2*pi*sigma_x*sigma_y)
-            + (x[mm]-x[nn])^2 / (2*sigma_x^2)
-            + (y[mm]-y[nn])^2 / (2*sigma_y^2));
+        # Combined covariance matrix for two localizations:
+        # Σ_comb = Σ_mm + Σ_nn (variances add for independent measurements)
+        σ_x² = x_se[mm]^2 + x_se[nn]^2
+        σ_y² = y_se[mm]^2 + y_se[nn]^2
+        σ_xy = xy_cov[mm] + xy_cov[nn]
+        det_Σ = σ_x² * σ_y² - σ_xy^2
+
+        # Mahalanobis distance: Δᵀ Σ⁻¹ Δ where Σ⁻¹ = [σ_y² -σ_xy; -σ_xy σ_x²] / det
+        Δx, Δy = x[mm] - x[nn], y[mm] - y[nn]
+        mahal = (σ_y² * Δx^2 - 2*σ_xy*Δx*Δy + σ_x² * Δy^2) / det_Σ
+
+        # Negative log-likelihood: -log(p) = 0.5*log(2π) + 0.5*log(det) + 0.5*mahal
+        separationcost = log(2*pi) + 0.5*log(det_Σ) + 0.5*mahal
         observationcost = -log((p_miss^(deltaframe-1)) * (1-p_miss))
         stilloncost = (k_off+k_bleach) * deltaframe
         costmatrix[mm, nn] = (separationcost+observationcost+stilloncost) / 2.0
@@ -81,8 +91,10 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
     for nn in indices
         deltaframe_past = minimum([maxframegap; framesint[nn]-startframe])
         deltaframe_future = minimum([maxframegap; nframes-framesint[nn]])
-        # Localization uncertainty area (μm²) to make density dimensionless
-        loc_area = pi * x_se[nn] * y_se[nn]
+        # Localization uncertainty ellipse area (μm²) to make density dimensionless
+        # Area = π√det(Σ) where det(Σ) = σ_x²σ_y² - σ_xy²
+        det_loc = x_se[nn]^2 * y_se[nn]^2 - xy_cov[nn]^2
+        loc_area = pi * sqrt(max(det_loc, eps()))
         birthcost = -log(1-p_miss) -
             log(rho_off[framesint[nn]] * loc_area * (1-exp(-k_on)) * exp(-deltaframe_past*k_on) +
                 rho_on[framesint[nn]-deltaframe_past] * loc_area * (p_miss^deltaframe_past))

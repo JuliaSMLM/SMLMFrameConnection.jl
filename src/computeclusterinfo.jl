@@ -15,7 +15,8 @@ function computeclusterinfo(clusterdata::Vector{Matrix{Float32}})
     nobservations = ones(nclusters)
     for nn = 1:nclusters
         # Compute the duration of this cluster.
-        currentframes = clusterdata[nn][:, 5]
+        # Column layout: 1:x 2:y 3:σ_x 4:σ_y 5:σ_xy 6:frame 7:dataset 8:connectID 9:sortindex
+        currentframes = clusterdata[nn][:, 6]
         clusterdurations[nn] = maximum(currentframes) - minimum(currentframes) + 1
 
         # Compute the number of observations of this cluster excluding the 

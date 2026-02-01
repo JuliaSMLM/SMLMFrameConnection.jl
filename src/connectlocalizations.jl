@@ -28,7 +28,7 @@ function connectlocalizations!(connectID::Vector{Int64},
 
         # Update `connectID` to reflect the LAP solution.
         _, maxconnectID = linkclusters!(connectID, maxconnectID,
-            Int64.(clusterdata[nn][:, 8]), assignment[1])
+            Int64.(clusterdata[nn][:, 9]), assignment[1])  # sortindex is column 9
     end
 
     # Ensure `connectID` is contains the set of integers 1:nclusters.
