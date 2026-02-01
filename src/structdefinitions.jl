@@ -51,7 +51,7 @@ consistent Emitter2DFit output.
 function to_emitter2dfit(e::SMLMData.AbstractEmitter, track_id::Int)
     T = typeof(e.x)
     SMLMData.Emitter2DFit{T}(
-        e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
+        e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy, e.σ_photons, e.σ_bg,
         e.frame, e.dataset, track_id, e.id
     )
 end

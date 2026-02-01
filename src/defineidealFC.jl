@@ -136,7 +136,7 @@ function defineidealFC(smld::BasicSMLD{T,E};
     for i in 1:length(emitters)
         e = emitters[i]
         new_emitters[i] = SMLMData.Emitter2DFit{ET}(
-            e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
+            e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy, e.σ_photons, e.σ_bg,
             e.frame, e.dataset, connectID[i], e.id
         )
     end

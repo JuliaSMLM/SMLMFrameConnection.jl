@@ -19,9 +19,10 @@ Pkg.add("SMLMFrameConnection")
 using SMLMData, SMLMFrameConnection
 
 # Run frame connection on your BasicSMLD with Emitter2DFit emitters
-smld_connected, smld_preclustered, smld_combined, params = frameconnect(smld)
+(combined, info) = frameconnect(smld)
 
-# smld_combined is the main output - higher precision localizations
+# combined is the main output - higher precision localizations
+# info contains connected SMLD, statistics, and estimated photophysics
 ```
 
 ## Input Requirements
@@ -35,6 +36,7 @@ Input `BasicSMLD` must contain `Emitter2DFit` emitters with:
 
 **Optional:**
 - `photons`, `bg`: Photometry (summed in output)
+- `σ_xy`: Position covariance (propagated in output)
 - `dataset`: Dataset identifier (default: 1)
 
 ## Algorithm Overview
@@ -42,16 +44,32 @@ Input `BasicSMLD` must contain `Emitter2DFit` emitters with:
 1. **Preclustering**: Groups spatially and temporally adjacent localizations into candidate clusters
 2. **Parameter Estimation**: Estimates fluorophore blinking kinetics (`k_on`, `k_off`, `k_bleach`) and emitter density from the data
 3. **Frame Connection**: Uses Linear Assignment Problem (LAP) to optimally assign localizations to emitters based on spatial proximity and estimated photophysics
-4. **Combination**: Combines connected localizations using MLE weighted mean for improved precision
+4. **Combination**: Combines connected localizations using MLE weighted mean with full covariance propagation
 
 ## Outputs
 
-| Output | Description |
-|--------|-------------|
-| `smld_combined` | **Main output** - combined high-precision localizations |
-| `smld_connected` | Original localizations with `track_id` labels |
-| `smld_preclustered` | Intermediate result (debugging) |
-| `params` | Estimated photophysics parameters |
+```julia
+(combined, info) = frameconnect(smld)
+```
+
+| Output | Type | Description |
+|--------|------|-------------|
+| `combined` | `BasicSMLD` | **Main output** - combined high-precision localizations |
+| `info` | `ConnectInfo` | Metadata: connected SMLD, statistics, photophysics |
+
+### ConnectInfo Fields
+
+| Field | Description |
+|-------|-------------|
+| `info.connected` | Original localizations with `track_id` labels |
+| `info.n_input` | Number of input localizations |
+| `info.n_tracks` | Number of tracks formed |
+| `info.n_combined` | Number of output localizations |
+| `info.n_preclusters` | Number of preclusters |
+| `info.k_on`, `k_off`, `k_bleach` | Estimated photophysics |
+| `info.p_miss` | Estimated miss probability |
+| `info.elapsed_ns` | Processing time (nanoseconds) |
+| `info.algorithm` | Algorithm used (`:lap`) |
 
 ## Parameters
 
@@ -66,6 +84,23 @@ frameconnect(smld;
 
 - `nsigmadev`: Higher values allow connections over larger distances
 - `maxframegap`: Increase for dyes with long dark states (dSTORM: 10-20)
+
+## Example
+
+```julia
+using SMLMData, SMLMFrameConnection
+
+# Run frame connection
+(combined, info) = frameconnect(smld; maxframegap=10)
+
+# Access results
+println("Combined $(info.n_input) → $(info.n_combined) localizations")
+println("Formed $(info.n_tracks) tracks")
+println("Estimated k_on=$(info.k_on), k_off=$(info.k_off)")
+
+# Access connected (uncombined) localizations with track_id
+connected_smld = info.connected
+```
 
 ## API Reference
 

@@ -15,6 +15,7 @@ end
     make_emitter(x, y, frame; σ_xy=0.02, photons=1000.0, track_id=0)
 
 Create a single Emitter2DFit for testing with sensible defaults.
+Note: σ_xy parameter sets both σ_x and σ_y (position uncertainties).
 """
 function make_emitter(x::Real, y::Real, frame::Int;
                       σ_xy::Real=0.02,
@@ -25,7 +26,8 @@ function make_emitter(x::Real, y::Real, frame::Int;
     return Emitter2DFit{Float64}(
         Float64(x), Float64(y),
         Float64(photons), Float64(bg),
-        Float64(σ_xy), Float64(σ_xy),
+        Float64(σ_xy), Float64(σ_xy),  # σ_x, σ_y
+        0.0,  # σ_xy covariance (uncorrelated)
         Float64(sqrt(photons)), Float64(sqrt(bg)),
         frame, dataset, track_id, 0
     )

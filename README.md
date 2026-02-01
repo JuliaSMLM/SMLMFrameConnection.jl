@@ -24,9 +24,10 @@ Pkg.add("SMLMFrameConnection")
 using SMLMData, SMLMFrameConnection
 
 # Run frame connection on your data
-smld_connected, smld_preclustered, smld_combined, params = frameconnect(smld)
+(combined, info) = frameconnect(smld)
 
-# smld_combined is the main output - higher precision localizations
+# combined is the main output - higher precision localizations
+# info contains connected SMLD, statistics, and estimated photophysics
 ```
 
 ## Input Requirements
@@ -52,41 +53,53 @@ using SMLMData, SMLMFrameConnection
 cam = IdealCamera(1:512, 1:512, 0.1)
 
 # Create emitters representing the same molecule blinking across 3 frames
-# Constructor: Emitter2DFit{T}(x, y, photons, bg, σ_x, σ_y, σ_photons, σ_bg; frame, dataset, track_id)
+# Constructor: Emitter2DFit{T}(x, y, photons, bg, σ_x, σ_y, σ_xy, σ_photons, σ_bg, frame, dataset, track_id, id)
 emitters = [
-    Emitter2DFit{Float64}(
-        5.0, 5.0,      # x, y position (μm)
-        1000.0, 10.0,  # photons, background
-        0.02, 0.02,    # σ_x, σ_y uncertainties (μm)
-        50.0, 2.0;     # σ_photons, σ_bg
-        frame=1
-    ),
-    Emitter2DFit{Float64}(5.01, 5.01, 1200.0, 12.0, 0.02, 0.02, 60.0, 2.0; frame=2),
-    Emitter2DFit{Float64}(5.02, 4.99, 1100.0, 11.0, 0.02, 0.02, 55.0, 2.0; frame=3),
+    Emitter2DFit{Float64}(5.0, 5.0, 1000.0, 10.0, 0.02, 0.02, 0.0, 50.0, 2.0, 1, 1, 0, 1),
+    Emitter2DFit{Float64}(5.01, 5.01, 1200.0, 12.0, 0.02, 0.02, 0.0, 60.0, 2.0, 2, 1, 0, 2),
+    Emitter2DFit{Float64}(5.02, 4.99, 1100.0, 11.0, 0.02, 0.02, 0.0, 55.0, 2.0, 3, 1, 0, 3),
 ]
 
 # Create SMLD: BasicSMLD(emitters, camera, n_frames, n_datasets)
 smld = BasicSMLD(emitters, cam, 3, 1)
 
 # Run frame connection
-_, _, smld_combined, _ = frameconnect(smld)
+(combined, info) = frameconnect(smld)
 
 # Result: localizations connected based on spatial/temporal proximity
+println("Combined $(info.n_input) localizations into $(info.n_combined)")
+println("Formed $(info.n_tracks) tracks from $(info.n_preclusters) preclusters")
+
 # Combined uncertainty: σ_combined ≈ σ_individual / √n_connected
 ```
 
 ## Outputs Explained
 
 ```julia
-smld_connected, smld_preclustered, smld_combined, params = frameconnect(smld)
+(combined, info) = frameconnect(smld)
 ```
 
-| Output | Description | When to use |
-|--------|-------------|-------------|
-| `smld_combined` | **Main output.** Combined high-precision localizations | Standard analysis |
-| `smld_connected` | Original localizations with `track_id` populated | When you need per-frame data with connection labels |
-| `smld_preclustered` | Intermediate preclustering result | Debugging, algorithm tuning |
-| `params` | Estimated photophysics + input parameters | Inspecting estimated k_on, k_off, density |
+| Output | Type | Description |
+|--------|------|-------------|
+| `combined` | `BasicSMLD` | **Main output.** Combined high-precision localizations |
+| `info` | `ConnectInfo` | Metadata: connected SMLD, statistics, estimated photophysics |
+
+### ConnectInfo Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `info.connected` | `BasicSMLD` | Original localizations with `track_id` populated |
+| `info.n_input` | `Int` | Number of input localizations |
+| `info.n_tracks` | `Int` | Number of tracks formed |
+| `info.n_combined` | `Int` | Number of output localizations |
+| `info.n_preclusters` | `Int` | Number of preclusters |
+| `info.k_on` | `Float64` | Estimated on rate (1/frame) |
+| `info.k_off` | `Float64` | Estimated off rate (1/frame) |
+| `info.k_bleach` | `Float64` | Estimated bleach rate (1/frame) |
+| `info.p_miss` | `Float64` | Estimated miss probability |
+| `info.initialdensity` | `Vector{Float64}` | Density estimate per cluster (emitters/μm²) |
+| `info.elapsed_ns` | `UInt64` | Processing time in nanoseconds |
+| `info.algorithm` | `Symbol` | Algorithm used (`:lap`) |
 
 ## Parameters
 
@@ -104,36 +117,24 @@ frameconnect(smld;
 - `maxframegap`: Set based on expected blinking duration. For dSTORM with long dark states, increase to 10-20.
 - Defaults work well for standard dSTORM/PALM data with typical blinking kinetics.
 
-## Estimated Parameters (ParamStruct)
-
-The algorithm estimates fluorophore photophysics from your data:
-
-| Field | Description |
-|-------|-------------|
-| `k_on` | Rate of transitioning from dark to visible state (1/frame) |
-| `k_off` | Rate of transitioning from visible to dark state (1/frame) |
-| `k_bleach` | Photobleaching rate (1/frame) |
-| `p_miss` | Probability of missing a localization when fluorophore is on |
-| `initialdensity` | Estimated emitter density per cluster (emitters/μm²) |
-
 ## Combination Method
 
-Connected localizations are combined using **maximum likelihood estimation (MLE) weighted mean**:
-- Position: inverse-variance weighted average → `x_combined = Σ(x/σ²) / Σ(1/σ²)`
-- Uncertainty: `σ_combined = √(1/Σ(1/σ²))` ≈ `σ_individual / √n`
+Connected localizations are combined using **maximum likelihood estimation (MLE) weighted mean** with full covariance propagation:
+- Position: inverse-variance weighted average using 2x2 covariance matrix
+- Uncertainty: properly propagated including σ_xy correlation
 - Photons: summed across connected localizations
 
 ## Utility Functions
 
 ### combinelocalizations
 ```julia
-smld_combined = combinelocalizations(smld)
+combined = combinelocalizations(smld)
 ```
 Combines emitters that share the same `track_id`. Use when you have pre-labeled data.
 
 ### defineidealFC
 ```julia
-smld_connected, smld_combined = defineidealFC(smld; maxframegap=5)
+(connected, combined) = defineidealFC(smld; maxframegap=5)
 ```
 For **simulated data** where `track_id` already contains ground-truth emitter IDs. Useful for validating frame-connection performance against known truth.
 

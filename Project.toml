@@ -1,7 +1,7 @@
 name = "SMLMFrameConnection"
 uuid = "1517b1a9-81e8-461f-b994-92eb29599690"
 authors = ["klidke@unm.edu"]
-version = "0.2.0"
+version = "0.3.0"
 
 [deps]
 Hungarian = "e91730f6-4275-51fb-a7a0-7064cfbd3b39"
@@ -15,7 +15,7 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Hungarian = "0.6, 0.7"
 NearestNeighbors = "0.4"
 Optim = "1, 2"
-SMLMData = "0.5"
+SMLMData = "0.6"
 StatsBase = "0.33, 0.34"
 julia = "1.6"
 

@@ -2,16 +2,20 @@
 
 Frame-connection for 2D SMLM data: combines repeated localizations of blinking fluorophores into higher-precision localizations.
 
+## Exports
+
+4 exports: `frameconnect`, `combinelocalizations`, `defineidealFC`, `ConnectInfo`, `ParamStruct`
+
 ## Main Functions
 
 ### frameconnect
 ```julia
-frameconnect(smld::BasicSMLD{T,Emitter2DFit{T}};
+(combined, info) = frameconnect(smld::BasicSMLD{T,Emitter2DFit{T}};
     nnearestclusters::Int=2,
     nsigmadev::Float64=5.0,
     maxframegap::Int=5,
     nmaxnn::Int=2
-) where T -> (smld_connected, smld_preclustered, smld_combined, params)
+) where T
 ```
 Main entry point. Connects repeated localizations and combines them.
 
@@ -21,27 +25,43 @@ Main entry point. Connects repeated localizations and combines them.
 - `maxframegap`: Maximum frame gap for temporal adjacency in preclusters
 - `nmaxnn`: Maximum nearest-neighbors inspected for precluster membership
 
-**Returns:**
-- `smld_connected`: Input with `track_id` populated (localizations uncombined)
-- `smld_preclustered`: Intermediate preclustering result (for debugging)
-- `smld_combined`: **Main output** - combined high-precision localizations
-- `params::ParamStruct`: Algorithm parameters (input + estimated photophysics)
+**Returns tuple:**
+- `combined::BasicSMLD`: **Main output** - combined high-precision localizations
+- `info::ConnectInfo`: Metadata including connected SMLD, statistics, and estimated photophysics
 
 ### combinelocalizations
 ```julia
-combinelocalizations(smld::BasicSMLD{T,Emitter2DFit{T}}) where T -> BasicSMLD
+combined = combinelocalizations(smld::BasicSMLD{T,Emitter2DFit{T}}) where T -> BasicSMLD
 ```
-Combines emitters sharing the same `track_id` using MLE weighted mean. Use when `track_id` is already populated.
+Combines emitters sharing the same `track_id` using MLE weighted mean with full covariance propagation. Use when `track_id` is already populated.
 
 ### defineidealFC
 ```julia
-defineidealFC(smld::BasicSMLD{T,Emitter2DFit{T}};
+(connected, combined) = defineidealFC(smld::BasicSMLD{T,Emitter2DFit{T}};
     maxframegap::Int=5
-) where T -> (smld_connected, smld_combined)
+) where T
 ```
 For simulated data where `track_id` indicates ground-truth emitter ID. Useful for validation/benchmarking.
 
 ## Types
+
+### ConnectInfo{T}
+```julia
+struct ConnectInfo{T}
+    connected::BasicSMLD{T}       # Input with track_id assigned (uncombined)
+    n_input::Int                  # Number of input localizations
+    n_tracks::Int                 # Number of tracks formed
+    n_combined::Int               # Number of output localizations
+    k_on::Float64                 # Estimated on rate (1/frame)
+    k_off::Float64                # Estimated off rate (1/frame)
+    k_bleach::Float64             # Estimated bleach rate (1/frame)
+    p_miss::Float64               # Probability of missed detection
+    initialdensity::Vector{Float64}  # Density estimate per cluster (emitters/μm²)
+    elapsed_ns::UInt64            # Processing time in nanoseconds
+    algorithm::Symbol             # Algorithm used (:lap)
+    n_preclusters::Int            # Number of preclusters formed
+end
+```
 
 ### ParamStruct
 ```julia
@@ -76,20 +96,41 @@ Input `BasicSMLD` must contain `Emitter2DFit` emitters.
 **Optional fields:**
 - `photons`, `σ_photons`: Photon count (summed in output)
 - `bg`, `σ_bg`: Background
+- `σ_xy`: Position covariance (microns², propagated in output)
 - `dataset`: Dataset identifier (default: 1)
 - `track_id`: Set to 0 for input (populated by algorithm)
 
 ## Output
 
-Output `smld_combined` contains `Emitter2DFit` emitters with:
-- Combined position via MLE weighted mean: `x = Σ(x/σ²) / Σ(1/σ²)`
-- Reduced uncertainties: `σ = √(1/Σ(1/σ²))`
+Output `combined` contains `Emitter2DFit` emitters with:
+- Combined position via MLE weighted mean with full 2x2 covariance
+- Properly propagated uncertainties including σ_xy
 - Summed photons
 - `track_id` indicating connection group
 
+## Example
+
+```julia
+using SMLMData, SMLMFrameConnection
+
+# Load or create SMLD
+smld = ...
+
+# Run frame connection
+(combined, info) = frameconnect(smld; maxframegap=10)
+
+# Access results
+println("Combined $(info.n_input) → $(info.n_combined) localizations")
+println("Estimated k_on=$(info.k_on), k_off=$(info.k_off)")
+println("Processing time: $(info.elapsed_ns / 1e9) seconds")
+
+# Access connected (uncombined) localizations
+connected_smld = info.connected
+```
+
 ## Dependencies
 
-- SMLMData.jl (v0.5+): BasicSMLD, Emitter2DFit types
+- SMLMData.jl (v0.6+): BasicSMLD, Emitter2DFit types
 - Hungarian.jl (v0.6-0.7): Linear assignment problem solver
 - NearestNeighbors.jl: Spatial clustering
 - Optim.jl: Parameter estimation

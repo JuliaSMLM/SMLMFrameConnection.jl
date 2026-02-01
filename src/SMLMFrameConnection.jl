@@ -7,9 +7,10 @@ using Optim
 using StatsBase
 using Statistics
 
-export frameconnect, defineidealFC, combinelocalizations, ParamStruct
+export frameconnect, defineidealFC, combinelocalizations, ParamStruct, ConnectInfo
 
 include("structdefinitions.jl")
+include("connectinfo.jl")
 include("precluster.jl")
 include("defineidealFC.jl")
 include("organizeclusters.jl")
