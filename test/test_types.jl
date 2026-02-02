@@ -8,7 +8,7 @@
         smld = BasicSMLD(emitters, camera, 1, 1, Dict{String,Any}())
 
         info = ConnectInfo{Float64}(
-            smld, 10, 5, 5, 0.1, 0.5, 0.01, 0.05, [1.0, 2.0], UInt64(1_000_000), :lap, 3
+            smld, 10, 5, 5, 0.1, 0.5, 0.01, 0.05, [1.0, 2.0], 1.5, :lap, 3
         )
 
         @test info isa ConnectInfo{Float64}
@@ -21,7 +21,7 @@
         @test info.k_bleach == 0.01
         @test info.p_miss == 0.05
         @test info.initialdensity == [1.0, 2.0]
-        @test info.elapsed_ns == UInt64(1_000_000)
+        @test info.elapsed_s == 1.5
         @test info.algorithm == :lap
         @test info.n_preclusters == 3
     end

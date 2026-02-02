@@ -87,7 +87,7 @@ println("$(info.n_input) → $(info.n_combined) localizations")
 | `combined` | **Main output.** Combined high-precision localizations | Standard analysis |
 | `info.connected` | Original localizations with `track_id` populated | When you need per-frame data with connection labels |
 | `info.n_tracks` | Number of tracks formed | Summary statistics |
-| `info.elapsed_ns` | Algorithm wall time in nanoseconds | Performance monitoring |
+| `info.elapsed_s` | Algorithm wall time in seconds | Performance monitoring |
 
 ### ConnectInfo Fields
 
@@ -102,7 +102,7 @@ println("$(info.n_input) → $(info.n_combined) localizations")
 | `k_bleach` | `Float64` | Estimated bleach rate (1/frame) |
 | `p_miss` | `Float64` | Probability of missed detection |
 | `initialdensity` | `Vector{Float64}` | Density estimate per cluster (emitters/μm²) |
-| `elapsed_ns` | `UInt64` | Wall time in nanoseconds |
+| `elapsed_s` | `Float64` | Wall time in seconds |
 | `algorithm` | `Symbol` | Algorithm used (`:lap`) |
 | `n_preclusters` | `Int` | Number of preclusters formed |
 

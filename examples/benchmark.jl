@@ -174,7 +174,7 @@ function profile_detailed(; n_molecules::Int = 50, n_frames::Int = 100)
     println("\nOutput:")
     println("  Final tracks: $(info.n_tracks)")
     println("  Combined emitters: $(info.n_combined)")
-    println("  Algorithm time: $(info.elapsed_ns / 1e9)s")
+    println("  Algorithm time: $(info.elapsed_s)s")
 
     # Precision improvement
     input_σ = mean([e.σ_x for e in smld.emitters])

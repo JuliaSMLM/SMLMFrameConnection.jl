@@ -104,7 +104,7 @@ println("\nRunning frame connection...")
 )
 
 println("  Combined localizations: $(length(combined.emitters))")
-println("  Time: $(info.elapsed_ns / 1e9) seconds")
+println("  Time: $(info.elapsed_s) seconds")
 
 # Compare with ideal result (using ground truth track_id)
 println("\nComputing ideal frame connection (ground truth)...")

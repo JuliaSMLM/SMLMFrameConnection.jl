@@ -46,7 +46,7 @@ function frameconnect(smld::BasicSMLD{T,E};
     nnearestclusters::Int = 2, nsigmadev::Float64 = 5.0,
     maxframegap::Int = 5, nmaxnn::Int = 2) where {T, E<:SMLMData.AbstractEmitter}
 
-    t_start = time_ns()
+    t_start = time()
 
     # Prepare a ParamStruct to keep track of parameters used.
     params = ParamStruct()
@@ -95,7 +95,7 @@ function frameconnect(smld::BasicSMLD{T,E};
     # Combine the connected localizations into higher precision localizations.
     smld_combined = combinelocalizations(smld_connected)
 
-    elapsed_ns = time_ns() - t_start
+    elapsed_s = time() - t_start
 
     # Build ConnectInfo
     n_tracks = length(unique(connectID_final))
@@ -109,7 +109,7 @@ function frameconnect(smld::BasicSMLD{T,E};
         params.k_bleach,
         params.p_miss,
         params.initialdensity,
-        elapsed_ns,
+        elapsed_s,
         :lap,
         n_preclusters
     )

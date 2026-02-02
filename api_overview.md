@@ -51,7 +51,7 @@ struct ConnectInfo{T}
     k_bleach::Float64             # Rate: photobleaching (1/frame)
     p_miss::Float64               # Probability of missed detection
     initialdensity::Vector{Float64}  # Emitter density per cluster (emitters/μm²)
-    elapsed_ns::UInt64            # Wall time in nanoseconds
+    elapsed_s::Float64            # Wall time in seconds
     algorithm::Symbol             # Algorithm used (:lap)
     n_preclusters::Int            # Number of preclusters formed
 end

@@ -15,7 +15,7 @@
         @test info.n_input == length(smld.emitters)
         @test info.n_tracks > 0
         @test info.n_combined == length(combined.emitters)
-        @test info.elapsed_ns > 0
+        @test info.elapsed_s > 0
         @test info.algorithm == :lap
         @test info.n_preclusters > 0
     end
@@ -162,9 +162,9 @@
 
         (combined, info) = frameconnect(smld)
 
-        # elapsed_ns should be positive and reasonable (< 60 seconds)
-        @test info.elapsed_ns > 0
-        @test info.elapsed_ns < 60_000_000_000  # < 60s
+        # elapsed_s should be positive and reasonable (< 60 seconds)
+        @test info.elapsed_s > 0
+        @test info.elapsed_s < 60.0
     end
 
     @testset "ConnectInfo type parameter" begin
