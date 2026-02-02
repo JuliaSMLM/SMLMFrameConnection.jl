@@ -69,13 +69,14 @@ function benchmark_single(smld; warmup::Bool = false)
     GC.gc()  # Clean up before measurement
 
     stats = @timed frameconnect(smld; nnearestclusters=2, nsigmadev=5.0, maxframegap=5, nmaxnn=2)
+    (combined, info) = stats.value
 
     return (
         time = stats.time,
         bytes = stats.bytes,
         gctime = stats.gctime,
         n_input = length(smld.emitters),
-        n_output = length(stats.value[3].emitters)
+        n_output = length(combined.emitters)
     )
 end
 
@@ -162,7 +163,7 @@ function profile_detailed(; n_molecules::Int = 50, n_frames::Int = 100)
     println("-" ^ 70)
 
     GC.gc()
-    @time result = frameconnect(
+    @time (combined, info) = frameconnect(
         smld;
         nnearestclusters = 2,
         nsigmadev = 5.0,
@@ -171,15 +172,16 @@ function profile_detailed(; n_molecules::Int = 50, n_frames::Int = 100)
     )
 
     println("\nOutput:")
-    println("  Final tracks: $(length(unique(e.track_id for e in result.connected.emitters)))")
-    println("  Combined emitters: $(length(result.combined.emitters))")
+    println("  Final tracks: $(info.n_tracks)")
+    println("  Combined emitters: $(info.n_combined)")
+    println("  Algorithm time: $(info.elapsed_ns / 1e9)s")
 
     # Precision improvement
     input_σ = mean([e.σ_x for e in smld.emitters])
-    combined_σ = mean([e.σ_x for e in result.combined.emitters])
+    combined_σ = mean([e.σ_x for e in combined.emitters])
     println("\nPrecision improvement: $(round(input_σ / combined_σ, digits=2))x")
 
-    return smld, result
+    return smld, (combined, info)
 end
 
 #=

@@ -1,47 +1,52 @@
 using SMLMData
 
 """
-    result = frameconnect(smld::BasicSMLD{T,E};
-        nnearestclusters::Int=2, nsigmadev::Float64=5.0,
-        maxframegap::Int=5, nmaxnn::Int=2) where {T, E<:SMLMData.AbstractEmitter}
+    (combined, info) = frameconnect(smld::BasicSMLD{T,E}; kwargs...)
 
 Connect repeated localizations of the same emitter in `smld`.
 
 # Description
 Repeated localizations of the same emitter present in `smld` are connected and
-combined into higher precision localizations of that emitter.  This is done by
+combined into higher precision localizations of that emitter. This is done by
 1) forming pre-clusters of localizations, 2) estimating rate parameters from
 the pre-clusters, 3) solving a linear assignment problem for connecting
 localizations in each pre-cluster, and 4) combining the connected localizations
 using their MLE position estimate assuming Gaussian noise.
 
-# Inputs
-- `smld`: BasicSMLD containing the localizations that should be connected.
-          Must contain emitters with valid position uncertainties (σ_x, σ_y).
-- `nnearestclusters`: Number of nearest preclusters used for local density
-                      estimates. (default = 2)(see estimatedensities())
-- `nsigmadev`: Multiplier of localization errors that defines a pre-clustering
-               distance threshold. (default = 5)(see precluster())(microns)
-- `maxframegap`: Maximum frame gap between temporally adjacent localizations in
-                 a precluster. (default = 5)(see precluster())(frames)
-- `nmaxnn`: Maximum number of nearest-neighbors inspected for precluster
-            membership.  Ideally, this would be set to inf, but that's not
-            feasible for most data. (default = 2)(see precluster())
+# Arguments
+- `smld::BasicSMLD`: Localizations to connect. Must contain emitters with valid
+                     position uncertainties (σ_x, σ_y).
 
-# Outputs
-Returns a NamedTuple with fields:
-- `combined`: Final frame-connection result (i.e., `smld` with localizations that
-              seem to be from the same blinking event combined into higher
-              precision localizations).
-- `connected`: Input `smld` with track_id field updated to reflect connected
-               localizations (localizations remain uncombined).
-- `params`: Structure of parameters used in the algorithm, with some copied
-            directly from the option kwargs to this function, and others
-            calculated internally (see SMLMFrameConnection.ParamStruct).
+# Keyword Arguments
+- `nnearestclusters::Int=2`: Number of nearest preclusters used for local density
+                             estimates (see `estimatedensities`)
+- `nsigmadev::Float64=5.0`: Multiplier of localization errors that defines a
+                            pre-clustering distance threshold (see `precluster`)
+- `maxframegap::Int=5`: Maximum frame gap between temporally adjacent localizations
+                        in a precluster (see `precluster`)
+- `nmaxnn::Int=2`: Maximum number of nearest-neighbors inspected for precluster
+                   membership (see `precluster`)
+
+# Returns
+A tuple `(combined, info)`:
+- `combined::BasicSMLD`: Connected localizations combined into higher precision results
+- `info::ConnectInfo`: Track assignments and algorithm metadata (see [`ConnectInfo`](@ref))
+
+# Example
+```julia
+(combined, info) = frameconnect(smld)
+println("Connected \$(info.n_input) → \$(info.n_combined) localizations")
+println("Formed \$(info.n_tracks) tracks from \$(info.n_preclusters) preclusters")
+
+# Access track assignments for downstream analysis
+track_ids = [e.track_id for e in info.connected.emitters]
+```
 """
 function frameconnect(smld::BasicSMLD{T,E};
     nnearestclusters::Int = 2, nsigmadev::Float64 = 5.0,
     maxframegap::Int = 5, nmaxnn::Int = 2) where {T, E<:SMLMData.AbstractEmitter}
+
+    t_start = time_ns()
 
     # Prepare a ParamStruct to keep track of parameters used.
     params = ParamStruct()
@@ -53,6 +58,7 @@ function frameconnect(smld::BasicSMLD{T,E};
     # Generate pre-clusters of localizations in `smld`.
     smld_preclustered = precluster(smld, params)
     clusterdata = organizeclusters(smld_preclustered)
+    n_preclusters = length(clusterdata)
 
     # Estimate rate parameters.
     params.k_on, params.k_off, params.k_bleach, params.p_miss =
@@ -89,5 +95,24 @@ function frameconnect(smld::BasicSMLD{T,E};
     # Combine the connected localizations into higher precision localizations.
     smld_combined = combinelocalizations(smld_connected)
 
-    return (combined=smld_combined, connected=smld_connected, params=params)
+    elapsed_ns = time_ns() - t_start
+
+    # Build ConnectInfo
+    n_tracks = length(unique(connectID_final))
+    info = ConnectInfo{T}(
+        smld_connected,
+        length(smld.emitters),
+        n_tracks,
+        length(smld_combined.emitters),
+        params.k_on,
+        params.k_off,
+        params.k_bleach,
+        params.p_miss,
+        params.initialdensity,
+        elapsed_ns,
+        :lap,
+        n_preclusters
+    )
+
+    return (smld_combined, info)
 end

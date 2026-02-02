@@ -54,7 +54,7 @@ function generate_synthetic_smld(;
                 e = Emitter2DFit{Float64}(
                     obs_x, obs_y,
                     photons, 10.0,           # photons, bg
-                    σ_loc, σ_loc,            # σ_x, σ_y
+                    σ_loc, σ_loc, 0.0,       # σ_x, σ_y, σ_xy
                     σ_photons, 3.0,          # σ_photons, σ_bg
                     frame, 1, mol_id, 0      # frame, dataset, track_id, id
                 )
@@ -68,7 +68,7 @@ function generate_synthetic_smld(;
 
     # Reset track_id to 0 for input (algorithm will populate it)
     input_emitters = [Emitter2DFit{Float64}(
-        e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
+        e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy, e.σ_photons, e.σ_bg,
         e.frame, e.dataset, 0, e.id  # track_id = 0
     ) for e in emitters]
 
@@ -95,7 +95,7 @@ println("  True molecules: $(length(unique(e.track_id for e in smld_truth.emitte
 
 # Run frame connection
 println("\nRunning frame connection...")
-result = frameconnect(
+(combined, info) = frameconnect(
     smld_input;
     nnearestclusters = 2,
     nsigmadev = 5.0,
@@ -103,7 +103,8 @@ result = frameconnect(
     nmaxnn = 2
 )
 
-println("  Combined localizations: $(length(result.combined.emitters))")
+println("  Combined localizations: $(length(combined.emitters))")
+println("  Time: $(info.elapsed_ns / 1e9) seconds")
 
 # Compare with ideal result (using ground truth track_id)
 println("\nComputing ideal frame connection (ground truth)...")
@@ -112,22 +113,22 @@ println("  Ideal combined: $(length(smld_ideal_combined.emitters))")
 
 # Print estimated parameters
 println("\nEstimated photophysics parameters:")
-println("  k_on (dark→visible rate): $(round(result.params.k_on, digits=4)) /frame")
-println("  k_off (visible→dark rate): $(round(result.params.k_off, digits=4)) /frame")
-println("  k_bleach (bleaching rate): $(round(result.params.k_bleach, digits=4)) /frame")
-println("  p_miss (miss probability): $(round(result.params.p_miss, digits=4))")
+println("  k_on (dark→visible rate): $(round(info.k_on, digits=4)) /frame")
+println("  k_off (visible→dark rate): $(round(info.k_off, digits=4)) /frame")
+println("  k_bleach (bleaching rate): $(round(info.k_bleach, digits=4)) /frame")
+println("  p_miss (miss probability): $(round(info.p_miss, digits=4))")
 
 # Compute precision improvement
 input_σ = mean([e.σ_x for e in smld_input.emitters])
-combined_σ = mean([e.σ_x for e in result.combined.emitters])
+combined_σ = mean([e.σ_x for e in combined.emitters])
 println("\nPrecision improvement:")
 println("  Mean input σ: $(round(input_σ * 1000, digits=1)) nm")
 println("  Mean combined σ: $(round(combined_σ * 1000, digits=1)) nm")
 println("  Improvement factor: $(round(input_σ / combined_σ, digits=2))x")
 
 # Summary statistics
-n_unique_tracks = length(unique(e.track_id for e in smld_connected.emitters))
-avg_locs_per_track = length(smld_connected.emitters) / n_unique_tracks
+n_unique_tracks = length(unique(e.track_id for e in info.connected.emitters))
+avg_locs_per_track = length(info.connected.emitters) / n_unique_tracks
 println("\nConnection statistics:")
 println("  Unique tracks identified: $n_unique_tracks")
 println("  Avg localizations per track: $(round(avg_locs_per_track, digits=1))")

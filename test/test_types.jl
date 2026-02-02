@@ -1,4 +1,31 @@
 @testset "Types" begin
+    @testset "ConnectInfo" begin
+        # Create minimal test data
+        emitters = [SMLMData.Emitter2DFit{Float64}(
+            5.0, 5.0, 1000.0, 10.0, 0.02, 0.02, 0.0, 10.0, 1.0, 1, 1, 1, 1
+        )]
+        camera = SMLMData.IdealCamera(1:64, 1:64, 0.1)
+        smld = BasicSMLD(emitters, camera, 1, 1, Dict{String,Any}())
+
+        info = ConnectInfo{Float64}(
+            smld, 10, 5, 5, 0.1, 0.5, 0.01, 0.05, [1.0, 2.0], UInt64(1_000_000), :lap, 3
+        )
+
+        @test info isa ConnectInfo{Float64}
+        @test info.connected === smld
+        @test info.n_input == 10
+        @test info.n_tracks == 5
+        @test info.n_combined == 5
+        @test info.k_on == 0.1
+        @test info.k_off == 0.5
+        @test info.k_bleach == 0.01
+        @test info.p_miss == 0.05
+        @test info.initialdensity == [1.0, 2.0]
+        @test info.elapsed_ns == UInt64(1_000_000)
+        @test info.algorithm == :lap
+        @test info.n_preclusters == 3
+    end
+
     @testset "ParamStruct" begin
         @testset "default constructor" begin
             params = ParamStruct()

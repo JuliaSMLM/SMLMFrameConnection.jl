@@ -24,14 +24,15 @@ Pkg.add("SMLMFrameConnection")
 using SMLMData, SMLMFrameConnection
 
 # Run frame connection on your data
-smld_connected, smld_preclustered, smld_combined, params = frameconnect(smld)
+(combined, info) = frameconnect(smld)
 
-# smld_combined is the main output - higher precision localizations
+# combined is the main output - higher precision localizations
+# info contains track assignments and algorithm metadata
 ```
 
 ## Input Requirements
 
-Input must be a `BasicSMLD{T, Emitter2DFit{T}}` from [SMLMData.jl](https://github.com/JuliaSMLM/SMLMData.jl).
+Input must be a `BasicSMLD` from [SMLMData.jl](https://github.com/JuliaSMLM/SMLMData.jl) with emitters containing position uncertainties.
 
 **Required fields** (algorithm fails without these):
 - `x`, `y`: Position coordinates in microns
@@ -52,41 +53,58 @@ using SMLMData, SMLMFrameConnection
 cam = IdealCamera(1:512, 1:512, 0.1)
 
 # Create emitters representing the same molecule blinking across 3 frames
-# Constructor: Emitter2DFit{T}(x, y, photons, bg, σ_x, σ_y, σ_photons, σ_bg; frame, dataset, track_id)
 emitters = [
     Emitter2DFit{Float64}(
-        5.0, 5.0,      # x, y position (μm)
+        5.00, 5.00,    # x, y position (μm)
         1000.0, 10.0,  # photons, background
-        0.02, 0.02,    # σ_x, σ_y uncertainties (μm)
-        50.0, 2.0;     # σ_photons, σ_bg
-        frame=1
+        0.02, 0.02, 0.0,  # σ_x, σ_y, σ_xy
+        50.0, 2.0,     # σ_photons, σ_bg
+        1, 1, 0, 1     # frame, dataset, track_id, id
     ),
-    Emitter2DFit{Float64}(5.01, 5.01, 1200.0, 12.0, 0.02, 0.02, 60.0, 2.0; frame=2),
-    Emitter2DFit{Float64}(5.02, 4.99, 1100.0, 11.0, 0.02, 0.02, 55.0, 2.0; frame=3),
+    Emitter2DFit{Float64}(5.01, 5.01, 1200.0, 12.0, 0.02, 0.02, 0.0, 60.0, 2.0, 2, 1, 0, 2),
+    Emitter2DFit{Float64}(5.02, 4.99, 1100.0, 11.0, 0.02, 0.02, 0.0, 55.0, 2.0, 3, 1, 0, 3),
 ]
 
 # Create SMLD: BasicSMLD(emitters, camera, n_frames, n_datasets)
 smld = BasicSMLD(emitters, cam, 3, 1)
 
 # Run frame connection
-_, _, smld_combined, _ = frameconnect(smld)
+(combined, info) = frameconnect(smld)
 
 # Result: localizations connected based on spatial/temporal proximity
 # Combined uncertainty: σ_combined ≈ σ_individual / √n_connected
+println("$(info.n_input) → $(info.n_combined) localizations")
 ```
 
 ## Outputs Explained
 
 ```julia
-smld_connected, smld_preclustered, smld_combined, params = frameconnect(smld)
+(combined, info) = frameconnect(smld)
 ```
 
 | Output | Description | When to use |
 |--------|-------------|-------------|
-| `smld_combined` | **Main output.** Combined high-precision localizations | Standard analysis |
-| `smld_connected` | Original localizations with `track_id` populated | When you need per-frame data with connection labels |
-| `smld_preclustered` | Intermediate preclustering result | Debugging, algorithm tuning |
-| `params` | Estimated photophysics + input parameters | Inspecting estimated k_on, k_off, density |
+| `combined` | **Main output.** Combined high-precision localizations | Standard analysis |
+| `info.connected` | Original localizations with `track_id` populated | When you need per-frame data with connection labels |
+| `info.n_tracks` | Number of tracks formed | Summary statistics |
+| `info.elapsed_ns` | Algorithm wall time in nanoseconds | Performance monitoring |
+
+### ConnectInfo Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `connected` | `BasicSMLD` | Input with `track_id` assigned (localizations uncombined) |
+| `n_input` | `Int` | Number of input localizations |
+| `n_tracks` | `Int` | Number of tracks formed |
+| `n_combined` | `Int` | Number of output localizations |
+| `k_on` | `Float64` | Estimated on rate (1/frame) |
+| `k_off` | `Float64` | Estimated off rate (1/frame) |
+| `k_bleach` | `Float64` | Estimated bleach rate (1/frame) |
+| `p_miss` | `Float64` | Probability of missed detection |
+| `initialdensity` | `Vector{Float64}` | Density estimate per cluster (emitters/μm²) |
+| `elapsed_ns` | `UInt64` | Wall time in nanoseconds |
+| `algorithm` | `Symbol` | Algorithm used (`:lap`) |
+| `n_preclusters` | `Int` | Number of preclusters formed |
 
 ## Parameters
 
@@ -104,9 +122,9 @@ frameconnect(smld;
 - `maxframegap`: Set based on expected blinking duration. For dSTORM with long dark states, increase to 10-20.
 - Defaults work well for standard dSTORM/PALM data with typical blinking kinetics.
 
-## Estimated Parameters (ParamStruct)
+## Estimated Photophysics
 
-The algorithm estimates fluorophore photophysics from your data:
+The algorithm estimates fluorophore photophysics from your data, accessible via `info`:
 
 | Field | Description |
 |-------|-------------|

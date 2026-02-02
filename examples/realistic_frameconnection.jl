@@ -101,7 +101,7 @@ function main()
 
     # Clear track_id for input (algorithm should estimate it)
     input_emitters = [Emitter2DFit{Float64}(
-        e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
+        e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy, e.σ_photons, e.σ_bg,
         e.frame, e.dataset, 0, e.id  # track_id = 0
     ) for e in smld_noisy.emitters]
 
@@ -126,8 +126,7 @@ function main()
         )
     end
 
-    result = stats.value
-    fc_params = result.params
+    (combined, info) = stats.value
 
     @printf("  Time:        %.2f seconds\n", stats.time)
     @printf("  Allocations: %.1f MB\n", stats.bytes / 1e6)
@@ -135,15 +134,13 @@ function main()
     # =========================================================================
     # 5. Results summary
     # =========================================================================
-    n_tracks = length(unique(e.track_id for e in result.connected.emitters))
-    n_combined = length(result.combined.emitters)
-
     println("\n5. Frame Connection Results")
     println("-" ^ 70)
-    @printf("  Input localizations:  %d\n", length(smld_input.emitters))
-    @printf("  Connected tracks:     %d\n", n_tracks)
-    @printf("  Combined emitters:    %d\n", n_combined)
-    @printf("  Reduction ratio:      %.1fx\n", length(smld_input.emitters) / n_combined)
+    @printf("  Input localizations:  %d\n", info.n_input)
+    @printf("  Connected tracks:     %d\n", info.n_tracks)
+    @printf("  Combined emitters:    %d\n", info.n_combined)
+    @printf("  Preclusters formed:   %d\n", info.n_preclusters)
+    @printf("  Reduction ratio:      %.1fx\n", info.n_input / info.n_combined)
 
     # =========================================================================
     # 6. Compare estimated vs true parameters
@@ -159,12 +156,12 @@ function main()
     println("  Parameter    True (Hz)    Estimated (/frame)    True (/frame)")
     println("  " * "-" ^ 60)
     @printf("  k_on         %.2f         %.4f                %.6f\n",
-            0.03, fc_params.k_on, true_k_on_pf)
+            0.03, info.k_on, true_k_on_pf)
     @printf("  k_off        %.2f         %.4f                %.4f\n",
-            3.0, fc_params.k_off, true_k_off_pf)
+            3.0, info.k_off, true_k_off_pf)
     @printf("  k_bleach     N/A          %.5f                N/A (2-state model)\n",
-            fc_params.k_bleach)
-    @printf("  p_miss       -            %.4f                -\n", fc_params.p_miss)
+            info.k_bleach)
+    @printf("  p_miss       -            %.4f                -\n", info.p_miss)
 
     # =========================================================================
     # 7. Precision improvement
@@ -173,8 +170,8 @@ function main()
     println("-" ^ 70)
 
     input_σ = mean([e.σ_x for e in smld_input.emitters])
-    combined_σ = mean([e.σ_x for e in result.combined.emitters])
-    avg_locs_per_track = length(result.connected.emitters) / n_tracks
+    combined_σ = mean([e.σ_x for e in combined.emitters])
+    avg_locs_per_track = info.n_input / info.n_tracks
     theoretical_improvement = sqrt(avg_locs_per_track)
 
     @printf("  Mean input σ:         %.1f nm\n", input_σ * 1000)
@@ -195,21 +192,21 @@ function main()
 
     @printf("  True emitters (SMLMSim):    %d\n", n_true_emitters)
     @printf("  Ideal combined:             %d\n", n_ideal)
-    @printf("  Algorithm combined:         %d\n", n_combined)
+    @printf("  Algorithm combined:         %d\n", info.n_combined)
 
-    if n_combined > n_ideal
+    if info.n_combined > n_ideal
         @printf("  Over-segmentation:          %.1f%% (algorithm found more)\n",
-                100.0 * (n_combined - n_ideal) / n_ideal)
+                100.0 * (info.n_combined - n_ideal) / n_ideal)
     else
         @printf("  Under-segmentation:         %.1f%% (algorithm merged too many)\n",
-                100.0 * (n_ideal - n_combined) / n_ideal)
+                100.0 * (n_ideal - info.n_combined) / n_ideal)
     end
 
     println("\n" * "=" ^ 70)
     println("Example complete!")
     println("=" ^ 70)
 
-    return smld_input, result, smld_noisy
+    return smld_input, (combined, info), smld_noisy
 end
 
 # Run

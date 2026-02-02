@@ -90,14 +90,12 @@ function benchmark_single_dataset(smld::BasicSMLD)
         )
     end
 
-    result = stats.value
-    n_output = length(result.combined.emitters)
-    n_tracks = length(unique(e.track_id for e in result.connected.emitters))
+    (combined, info) = stats.value
 
     return (
         n_input = n_input,
-        n_output = n_output,
-        n_tracks = n_tracks,
+        n_output = info.n_combined,
+        n_tracks = info.n_tracks,
         time = stats.time,
         bytes = stats.bytes,
         gctime = stats.gctime
