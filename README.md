@@ -106,16 +106,34 @@ println("$(info.n_input) → $(info.n_combined) localizations")
 | `algorithm` | `Symbol` | Algorithm used (`:lap`) |
 | `n_preclusters` | `Int` | Number of preclusters formed |
 
-## Parameters
+## Configuration
 
+Two equivalent ways to configure `frameconnect`:
+
+### Keyword Arguments (most common)
 ```julia
-frameconnect(smld;
+(combined, info) = frameconnect(smld;
     nnearestclusters = 2,   # Clusters used for local density estimation
     nsigmadev = 5.0,        # Distance threshold = nsigmadev × localization uncertainty
     maxframegap = 5,        # Max frames between connected localizations
     nmaxnn = 2              # Nearest neighbors checked during preclustering
 )
 ```
+
+### Config Struct (for reusable/shareable settings)
+```julia
+config = ConnectConfig(maxframegap=10, nsigmadev=3.0)
+(combined, info) = frameconnect(smld, config)
+```
+
+### ConnectConfig Fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `nnearestclusters` | 2 | Nearest preclusters for local density estimation |
+| `nsigmadev` | 5.0 | Sigma multiplier for preclustering distance threshold |
+| `maxframegap` | 5 | Maximum frame gap for temporal adjacency |
+| `nmaxnn` | 2 | Maximum nearest-neighbors for precluster membership |
 
 **Parameter guidance:**
 - `nsigmadev`: Higher values allow connections over larger distances. Default (5.0) works for typical SMLM data. Reduce for dense samples.

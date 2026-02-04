@@ -6,20 +6,13 @@ Frame-connection for 2D SMLM data: combines repeated localizations of blinking f
 
 ### frameconnect
 ```julia
-(combined, info) = frameconnect(smld::BasicSMLD;
-    nnearestclusters::Int=2,
-    nsigmadev::Float64=5.0,
-    maxframegap::Int=5,
-    nmaxnn::Int=2
-)
+# Kwargs form (most common)
+(combined, info) = frameconnect(smld::BasicSMLD; kwargs...)
+
+# Config form (reusable settings)
+(combined, info) = frameconnect(smld::BasicSMLD, config::ConnectConfig)
 ```
 Main entry point. Connects repeated localizations and combines them.
-
-**Parameters:**
-- `nnearestclusters`: Nearest preclusters for local density estimation
-- `nsigmadev`: Sigma multiplier defining preclustering distance threshold (higher = larger connection radius)
-- `maxframegap`: Maximum frame gap for temporal adjacency in preclusters
-- `nmaxnn`: Maximum nearest-neighbors inspected for precluster membership
 
 **Returns tuple `(combined, info)`:**
 - `combined::BasicSMLD`: **Main output** - combined high-precision localizations
@@ -38,6 +31,27 @@ defineidealFC(smld::BasicSMLD; maxframegap::Int=5) -> (smld_connected, smld_comb
 For simulated data where `track_id` indicates ground-truth emitter ID. Useful for validation/benchmarking.
 
 ## Types
+
+### ConnectConfig
+```julia
+@kwdef struct ConnectConfig
+    nnearestclusters::Int = 2   # Nearest preclusters for local density estimation
+    nsigmadev::Float64 = 5.0    # Sigma multiplier for preclustering distance threshold
+    maxframegap::Int = 5        # Maximum frame gap for temporal adjacency
+    nmaxnn::Int = 2             # Maximum nearest-neighbors for precluster membership
+end
+```
+Configuration parameters for frame connection. Use with `frameconnect(smld, config)` or pass fields as kwargs to `frameconnect(smld; kwargs...)`.
+
+**Example:**
+```julia
+# Create config with custom settings
+config = ConnectConfig(maxframegap=10, nsigmadev=3.0)
+(combined, info) = frameconnect(smld, config)
+
+# Equivalent kwargs form
+(combined, info) = frameconnect(smld; maxframegap=10, nsigmadev=3.0)
+```
 
 ### ConnectInfo{T}
 ```julia
