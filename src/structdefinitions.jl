@@ -1,8 +1,44 @@
 # This file defines some struct types used in the FrameConnection package.
 
 """
-    ParamStruct(initialdensity::Vector{Float64}, 
-        k_on::Float64, k_off::Float64, k_bleach::Float64, p_miss::Float64, 
+    ConnectConfig
+
+Configuration parameters for frame connection algorithm.
+
+# Fields
+- `nnearestclusters::Int=2`: Number of nearest preclusters used for local density
+                             estimates (see `estimatedensities`)
+- `nsigmadev::Float64=5.0`: Multiplier of localization errors that defines a
+                            pre-clustering distance threshold (see `precluster`)
+- `maxframegap::Int=5`: Maximum frame gap between temporally adjacent localizations
+                        in a precluster (see `precluster`)
+- `nmaxnn::Int=2`: Maximum number of nearest-neighbors inspected for precluster
+                   membership (see `precluster`)
+
+# Example
+```julia
+# Using default config
+config = ConnectConfig()
+(combined, info) = frameconnect(smld, config)
+
+# Custom config
+config = ConnectConfig(maxframegap=10, nsigmadev=3.0)
+(combined, info) = frameconnect(smld, config)
+
+# Kwargs form (equivalent to Config form)
+(combined, info) = frameconnect(smld; maxframegap=10, nsigmadev=3.0)
+```
+"""
+Base.@kwdef struct ConnectConfig
+    nnearestclusters::Int = 2
+    nsigmadev::Float64 = 5.0
+    maxframegap::Int = 5
+    nmaxnn::Int = 2
+end
+
+"""
+    ParamStruct(initialdensity::Vector{Float64},
+        k_on::Float64, k_off::Float64, k_bleach::Float64, p_miss::Float64,
         nsigmadev::Float64, maxframegap::Int, nnearestclusters::Int)
 
 Structure of parameters needed for frame-connection.

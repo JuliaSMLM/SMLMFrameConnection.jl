@@ -1,7 +1,8 @@
 using SMLMData
 
 """
-    (combined, info) = frameconnect(smld::BasicSMLD{T,E}; kwargs...)
+    (combined, info) = frameconnect(smld::BasicSMLD, config::ConnectConfig)
+    (combined, info) = frameconnect(smld::BasicSMLD; kwargs...)
 
 Connect repeated localizations of the same emitter in `smld`.
 
@@ -16,8 +17,9 @@ using their MLE position estimate assuming Gaussian noise.
 # Arguments
 - `smld::BasicSMLD`: Localizations to connect. Must contain emitters with valid
                      position uncertainties (σ_x, σ_y).
+- `config::ConnectConfig`: Configuration parameters (optional, can use kwargs instead)
 
-# Keyword Arguments
+# Keyword Arguments (equivalent to ConnectConfig fields)
 - `nnearestclusters::Int=2`: Number of nearest preclusters used for local density
                              estimates (see `estimatedensities`)
 - `nsigmadev::Float64=5.0`: Multiplier of localization errors that defines a
@@ -34,7 +36,14 @@ A tuple `(combined, info)`:
 
 # Example
 ```julia
+# Using kwargs (most common)
 (combined, info) = frameconnect(smld)
+(combined, info) = frameconnect(smld; maxframegap=10)
+
+# Using config struct
+config = ConnectConfig(maxframegap=10, nsigmadev=3.0)
+(combined, info) = frameconnect(smld, config)
+
 println("Connected \$(info.n_input) → \$(info.n_combined) localizations")
 println("Formed \$(info.n_tracks) tracks from \$(info.n_preclusters) preclusters")
 
@@ -42,18 +51,21 @@ println("Formed \$(info.n_tracks) tracks from \$(info.n_preclusters) preclusters
 track_ids = [e.track_id for e in info.connected.emitters]
 ```
 """
-function frameconnect(smld::BasicSMLD{T,E};
-    nnearestclusters::Int = 2, nsigmadev::Float64 = 5.0,
-    maxframegap::Int = 5, nmaxnn::Int = 2) where {T, E<:SMLMData.AbstractEmitter}
+function frameconnect(smld::BasicSMLD{T,E}; kwargs...) where {T, E<:SMLMData.AbstractEmitter}
+    # kwargs form forwards to config form
+    config = ConnectConfig(; kwargs...)
+    return frameconnect(smld, config)
+end
 
+function frameconnect(smld::BasicSMLD{T,E}, config::ConnectConfig) where {T, E<:SMLMData.AbstractEmitter}
     t_start = time()
 
     # Prepare a ParamStruct to keep track of parameters used.
     params = ParamStruct()
-    params.nnearestclusters = nnearestclusters
-    params.nsigmadev = nsigmadev
-    params.maxframegap = maxframegap
-    params.nmaxnn = nmaxnn
+    params.nnearestclusters = config.nnearestclusters
+    params.nsigmadev = config.nsigmadev
+    params.maxframegap = config.maxframegap
+    params.nmaxnn = config.nmaxnn
 
     # Generate pre-clusters of localizations in `smld`.
     smld_preclustered = precluster(smld, params)

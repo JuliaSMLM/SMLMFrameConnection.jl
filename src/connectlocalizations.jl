@@ -1,8 +1,8 @@
 using StatsBase
 
 """
-    connectlocalizations!(connectID::Vector{Int64}, 
-        clusterdata::Vector{Matrix{Float32}}, 
+    connectlocalizations!(connectID::Vector{Int64},
+        clusterdata::Vector{Matrix{Float32}},
         params::ParamStruct, nframes::Int64)
 
 Connect localizations in `clusterdata` by solving a linear assignment problem.
