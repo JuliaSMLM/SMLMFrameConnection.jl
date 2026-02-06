@@ -1,6 +1,7 @@
 module SMLMFrameConnection
 
 using SMLMData
+import SMLMData: AbstractSMLMConfig, AbstractSMLMInfo
 using Hungarian
 using NearestNeighbors
 using Optim

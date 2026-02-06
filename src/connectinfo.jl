@@ -36,7 +36,7 @@ println("Formed \$(info.n_tracks) tracks in \$(info.elapsed_s)s")
 # Access track assignments via info.connected
 ```
 """
-struct ConnectInfo{T}
+struct ConnectInfo{T} <: AbstractSMLMInfo
     connected::BasicSMLD{T}
     n_input::Int
     n_tracks::Int

@@ -29,7 +29,7 @@ config = ConnectConfig(maxframegap=10, nsigmadev=3.0)
 (combined, info) = frameconnect(smld; maxframegap=10, nsigmadev=3.0)
 ```
 """
-Base.@kwdef struct ConnectConfig
+Base.@kwdef struct ConnectConfig <: AbstractSMLMConfig
     nnearestclusters::Int = 2
     nsigmadev::Float64 = 5.0
     maxframegap::Int = 5
