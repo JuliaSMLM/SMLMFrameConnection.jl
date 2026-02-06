@@ -9,7 +9,7 @@ using StatsBase
 using Statistics
 
 export frameconnect, defineidealFC, combinelocalizations
-export ConnectConfig, ConnectInfo, ParamStruct
+export FrameConnectConfig, FrameConnectInfo, ParamStruct
 
 include("structdefinitions.jl")
 include("connectinfo.jl")

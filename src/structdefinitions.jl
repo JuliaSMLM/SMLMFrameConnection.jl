@@ -1,7 +1,7 @@
 # This file defines some struct types used in the FrameConnection package.
 
 """
-    ConnectConfig
+    FrameConnectConfig
 
 Configuration parameters for frame connection algorithm.
 
@@ -18,18 +18,18 @@ Configuration parameters for frame connection algorithm.
 # Example
 ```julia
 # Using default config
-config = ConnectConfig()
+config = FrameConnectConfig()
 (combined, info) = frameconnect(smld, config)
 
 # Custom config
-config = ConnectConfig(maxframegap=10, nsigmadev=3.0)
+config = FrameConnectConfig(maxframegap=10, nsigmadev=3.0)
 (combined, info) = frameconnect(smld, config)
 
 # Kwargs form (equivalent to Config form)
 (combined, info) = frameconnect(smld; maxframegap=10, nsigmadev=3.0)
 ```
 """
-Base.@kwdef struct ConnectConfig <: AbstractSMLMConfig
+Base.@kwdef struct FrameConnectConfig <: AbstractSMLMConfig
     nnearestclusters::Int = 2
     nsigmadev::Float64 = 5.0
     maxframegap::Int = 5

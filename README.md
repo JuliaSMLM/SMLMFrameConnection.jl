@@ -89,7 +89,7 @@ println("$(info.n_input) → $(info.n_combined) localizations")
 | `info.n_tracks` | Number of tracks formed | Summary statistics |
 | `info.elapsed_s` | Algorithm wall time in seconds | Performance monitoring |
 
-### ConnectInfo Fields
+### FrameConnectInfo Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -122,11 +122,11 @@ Two equivalent ways to configure `frameconnect`:
 
 ### Config Struct (for reusable/shareable settings)
 ```julia
-config = ConnectConfig(maxframegap=10, nsigmadev=3.0)
+config = FrameConnectConfig(maxframegap=10, nsigmadev=3.0)
 (combined, info) = frameconnect(smld, config)
 ```
 
-### ConnectConfig Fields
+### FrameConnectConfig Fields
 
 | Field | Default | Description |
 |-------|---------|-------------|

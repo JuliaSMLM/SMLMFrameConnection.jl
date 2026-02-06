@@ -8,9 +8,9 @@
         (combined, info) = frameconnect(smld)
 
         @test combined isa BasicSMLD
-        @test info isa ConnectInfo
+        @test info isa FrameConnectInfo
 
-        # ConnectInfo fields
+        # FrameConnectInfo fields
         @test info.connected isa BasicSMLD
         @test info.n_input == length(smld.emitters)
         @test info.n_tracks > 0
@@ -167,11 +167,11 @@
         @test info.elapsed_s < 60.0
     end
 
-    @testset "ConnectInfo type parameter" begin
+    @testset "FrameConnectInfo type parameter" begin
         # Test with Float64
         smld64 = make_single_molecule_smld()
         (_, info64) = frameconnect(smld64)
-        @test info64 isa ConnectInfo{Float64}
+        @test info64 isa FrameConnectInfo{Float64}
 
         # Test with Float32
         emitters32 = [SMLMData.Emitter2DFit{Float32}(
@@ -182,6 +182,6 @@
         camera32 = SMLMData.IdealCamera(1:64, 1:64, 0.1f0)
         smld32 = BasicSMLD(emitters32, camera32, 1, 1, Dict{String,Any}())
         (_, info32) = frameconnect(smld32)
-        @test info32 isa ConnectInfo{Float32}
+        @test info32 isa FrameConnectInfo{Float32}
     end
 end

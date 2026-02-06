@@ -1,7 +1,7 @@
 using SMLMData
 
 """
-    (combined, info) = frameconnect(smld::BasicSMLD, config::ConnectConfig)
+    (combined, info) = frameconnect(smld::BasicSMLD, config::FrameConnectConfig)
     (combined, info) = frameconnect(smld::BasicSMLD; kwargs...)
 
 Connect repeated localizations of the same emitter in `smld`.
@@ -17,9 +17,9 @@ using their MLE position estimate assuming Gaussian noise.
 # Arguments
 - `smld::BasicSMLD`: Localizations to connect. Must contain emitters with valid
                      position uncertainties (σ_x, σ_y).
-- `config::ConnectConfig`: Configuration parameters (optional, can use kwargs instead)
+- `config::FrameConnectConfig`: Configuration parameters (optional, can use kwargs instead)
 
-# Keyword Arguments (equivalent to ConnectConfig fields)
+# Keyword Arguments (equivalent to FrameConnectConfig fields)
 - `nnearestclusters::Int=2`: Number of nearest preclusters used for local density
                              estimates (see `estimatedensities`)
 - `nsigmadev::Float64=5.0`: Multiplier of localization errors that defines a
@@ -32,7 +32,7 @@ using their MLE position estimate assuming Gaussian noise.
 # Returns
 A tuple `(combined, info)`:
 - `combined::BasicSMLD`: Connected localizations combined into higher precision results
-- `info::ConnectInfo`: Track assignments and algorithm metadata (see [`ConnectInfo`](@ref))
+- `info::FrameConnectInfo`: Track assignments and algorithm metadata (see [`FrameConnectInfo`](@ref))
 
 # Example
 ```julia
@@ -41,7 +41,7 @@ A tuple `(combined, info)`:
 (combined, info) = frameconnect(smld; maxframegap=10)
 
 # Using config struct
-config = ConnectConfig(maxframegap=10, nsigmadev=3.0)
+config = FrameConnectConfig(maxframegap=10, nsigmadev=3.0)
 (combined, info) = frameconnect(smld, config)
 
 println("Connected \$(info.n_input) → \$(info.n_combined) localizations")
@@ -53,11 +53,11 @@ track_ids = [e.track_id for e in info.connected.emitters]
 """
 function frameconnect(smld::BasicSMLD{T,E}; kwargs...) where {T, E<:SMLMData.AbstractEmitter}
     # kwargs form forwards to config form
-    config = ConnectConfig(; kwargs...)
+    config = FrameConnectConfig(; kwargs...)
     return frameconnect(smld, config)
 end
 
-function frameconnect(smld::BasicSMLD{T,E}, config::ConnectConfig) where {T, E<:SMLMData.AbstractEmitter}
+function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T, E<:SMLMData.AbstractEmitter}
     t_start = time()
 
     # Prepare a ParamStruct to keep track of parameters used.
@@ -109,9 +109,9 @@ function frameconnect(smld::BasicSMLD{T,E}, config::ConnectConfig) where {T, E<:
 
     elapsed_s = time() - t_start
 
-    # Build ConnectInfo
+    # Build FrameConnectInfo
     n_tracks = length(unique(connectID_final))
-    info = ConnectInfo{T}(
+    info = FrameConnectInfo{T}(
         smld_connected,
         length(smld.emitters),
         n_tracks,

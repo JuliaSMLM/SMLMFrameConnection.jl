@@ -10,13 +10,13 @@ Frame-connection for 2D SMLM data: combines repeated localizations of blinking f
 (combined, info) = frameconnect(smld::BasicSMLD; kwargs...)
 
 # Config form (reusable settings)
-(combined, info) = frameconnect(smld::BasicSMLD, config::ConnectConfig)
+(combined, info) = frameconnect(smld::BasicSMLD, config::FrameConnectConfig)
 ```
 Main entry point. Connects repeated localizations and combines them.
 
 **Returns tuple `(combined, info)`:**
 - `combined::BasicSMLD`: **Main output** - combined high-precision localizations
-- `info::ConnectInfo`: Track assignments and algorithm metadata
+- `info::FrameConnectInfo`: Track assignments and algorithm metadata
 
 ### combinelocalizations
 ```julia
@@ -32,9 +32,9 @@ For simulated data where `track_id` indicates ground-truth emitter ID. Useful fo
 
 ## Types
 
-### ConnectConfig
+### FrameConnectConfig
 ```julia
-@kwdef struct ConnectConfig
+@kwdef struct FrameConnectConfig
     nnearestclusters::Int = 2   # Nearest preclusters for local density estimation
     nsigmadev::Float64 = 5.0    # Sigma multiplier for preclustering distance threshold
     maxframegap::Int = 5        # Maximum frame gap for temporal adjacency
@@ -46,16 +46,16 @@ Configuration parameters for frame connection. Use with `frameconnect(smld, conf
 **Example:**
 ```julia
 # Create config with custom settings
-config = ConnectConfig(maxframegap=10, nsigmadev=3.0)
+config = FrameConnectConfig(maxframegap=10, nsigmadev=3.0)
 (combined, info) = frameconnect(smld, config)
 
 # Equivalent kwargs form
 (combined, info) = frameconnect(smld; maxframegap=10, nsigmadev=3.0)
 ```
 
-### ConnectInfo{T}
+### FrameConnectInfo{T}
 ```julia
-struct ConnectInfo{T}
+struct FrameConnectInfo{T}
     connected::BasicSMLD{T}       # Input with track_id assigned (uncombined)
     n_input::Int                  # Number of input localizations
     n_tracks::Int                 # Number of tracks formed
