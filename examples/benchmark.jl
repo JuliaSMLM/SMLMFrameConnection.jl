@@ -62,20 +62,21 @@ Benchmark a single run with timing and allocation tracking.
 function benchmark_single(smld; warmup::Bool = false)
     # Warmup run (if needed)
     if warmup
-        frameconnect(smld; nnearestclusters=1)
+        frameconnect(smld; n_density_neighbors=1)
     end
 
     # Timed run
     GC.gc()  # Clean up before measurement
 
-    stats = @timed frameconnect(smld; nnearestclusters=2, nsigmadev=5.0, maxframegap=5, nmaxnn=2)
+    stats = @timed frameconnect(smld; n_density_neighbors=2, max_sigma_dist=5.0, max_frame_gap=5, max_neighbors=2)
+    (combined, info) = stats.value
 
     return (
         time = stats.time,
         bytes = stats.bytes,
         gctime = stats.gctime,
         n_input = length(smld.emitters),
-        n_output = length(stats.value[3].emitters)
+        n_output = length(combined.emitters)
     )
 end
 
@@ -156,30 +157,31 @@ function profile_detailed(; n_molecules::Int = 50, n_frames::Int = 100)
     println("Input localizations: $(length(smld.emitters))")
 
     # Warmup
-    frameconnect(smld; nnearestclusters=1)
+    frameconnect(smld; n_density_neighbors=1)
 
     println("\nRunning with @time macro:")
     println("-" ^ 70)
 
     GC.gc()
-    @time result = frameconnect(
+    @time (combined, info) = frameconnect(
         smld;
-        nnearestclusters = 2,
-        nsigmadev = 5.0,
-        maxframegap = 5,
-        nmaxnn = 2
+        n_density_neighbors = 2,
+        max_sigma_dist = 5.0,
+        max_frame_gap = 5,
+        max_neighbors = 2
     )
 
     println("\nOutput:")
-    println("  Final tracks: $(length(unique(e.track_id for e in result.connected.emitters)))")
-    println("  Combined emitters: $(length(result.combined.emitters))")
+    println("  Final tracks: $(info.n_tracks)")
+    println("  Combined emitters: $(info.n_combined)")
+    println("  Algorithm time: $(info.elapsed_s)s")
 
     # Precision improvement
     input_σ = mean([e.σ_x for e in smld.emitters])
-    combined_σ = mean([e.σ_x for e in result.combined.emitters])
+    combined_σ = mean([e.σ_x for e in combined.emitters])
     println("\nPrecision improvement: $(round(input_σ / combined_σ, digits=2))x")
 
-    return smld, result
+    return smld, (combined, info)
 end
 
 #=
@@ -194,14 +196,14 @@ function allocation_breakdown(; n_molecules::Int = 30, n_frames::Int = 50)
     println("\nDataset: $(length(smld.emitters)) localizations")
 
     # Warmup
-    frameconnect(smld; nnearestclusters=1)
+    frameconnect(smld; n_density_neighbors=1)
 
     # Prepare params
     params = SMLMFrameConnection.ParamStruct()
-    params.nnearestclusters = 2
-    params.nsigmadev = 5.0
-    params.maxframegap = 5
-    params.nmaxnn = 2
+    params.n_density_neighbors = 2
+    params.max_sigma_dist = 5.0
+    params.max_frame_gap = 5
+    params.max_neighbors = 2
 
     println("\n@allocated for each step:")
     println("-" ^ 50)
@@ -237,9 +239,9 @@ function allocation_breakdown(; n_molecules::Int = 30, n_frames::Int = 50)
     # Step 4: Estimate densities
     GC.gc()
     alloc_densities = @allocated begin
-        params.initialdensity = SMLMFrameConnection.estimatedensities(smld_pre, clusterdata, params)
+        params.initial_density = SMLMFrameConnection.estimatedensities(smld_pre, clusterdata, params)
     end
-    params.initialdensity = SMLMFrameConnection.estimatedensities(smld_pre, clusterdata, params)
+    params.initial_density = SMLMFrameConnection.estimatedensities(smld_pre, clusterdata, params)
     @printf("  estimatedensities:    %10.2f KB\n", alloc_densities / 1024)
 
     # Step 5: Connect localizations (LAP)

@@ -83,21 +83,19 @@ function benchmark_single_dataset(smld::BasicSMLD)
     stats = @timed begin
         frameconnect(
             smld;
-            nnearestclusters = 2,
-            nsigmadev = 5.0,
-            maxframegap = 10,
-            nmaxnn = 2
+            n_density_neighbors = 2,
+            max_sigma_dist = 5.0,
+            max_frame_gap = 10,
+            max_neighbors = 2
         )
     end
 
-    result = stats.value
-    n_output = length(result.combined.emitters)
-    n_tracks = length(unique(e.track_id for e in result.connected.emitters))
+    (combined, info) = stats.value
 
     return (
         n_input = n_input,
-        n_output = n_output,
-        n_tracks = n_tracks,
+        n_output = info.n_combined,
+        n_tracks = info.n_tracks,
         time = stats.time,
         bytes = stats.bytes,
         gctime = stats.gctime

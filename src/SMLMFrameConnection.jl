@@ -1,15 +1,18 @@
 module SMLMFrameConnection
 
 using SMLMData
+import SMLMData: AbstractSMLMConfig, AbstractSMLMInfo
 using Hungarian
 using NearestNeighbors
 using Optim
 using StatsBase
 using Statistics
 
-export frameconnect, defineidealFC, combinelocalizations, ParamStruct
+export frameconnect, defineidealFC, combinelocalizations
+export FrameConnectConfig, FrameConnectInfo, ParamStruct
 
 include("structdefinitions.jl")
+include("connectinfo.jl")
 include("precluster.jl")
 include("defineidealFC.jl")
 include("organizeclusters.jl")

@@ -11,8 +11,8 @@ Cluster localizations in `smld` based on distance and time thresholds in `params
 # Description
 Localizations in the input structure `smld` are clustered together based on
 their spatiotemporal separations.  All localizations within a spatial
-threshold of `params.nsigmadev*mean([σ_x σ_y])` and a temporal
-threshold of `params.maxframegap` of one another will be clustered together,
+threshold of `params.max_sigma_dist*mean([σ_x σ_y])` and a temporal
+threshold of `params.max_frame_gap` of one another will be clustered together,
 meaning that these localizations now share the same unique integer value for
 their track_id field.
 
@@ -46,9 +46,9 @@ function precluster(smld::BasicSMLD{T,E},
     mean_se = Statistics.mean([σ_x σ_y]; dims = 2)
 
     # Isolate some parameters from params.
-    maxframegap = params.maxframegap
-    nsigmadev = params.nsigmadev
-    nmaxnn = params.nmaxnn
+    max_frame_gap = params.max_frame_gap
+    max_sigma_dist = params.max_sigma_dist
+    max_neighbors = params.max_neighbors
 
     # Initialize a connectID array, with each localization being considered
     # a unique cluster.
@@ -81,7 +81,7 @@ function precluster(smld::BasicSMLD{T,E},
             # Determine which localizations should be considered for
             # clustering.
             currentindFN = (1:nperframe[ff]) .+ ncumulativeFN[ff]
-            candidateind = findall((framenumCDS .>= (frames[ff] .- maxframegap)) .&
+            candidateind = findall((framenumCDS .>= (frames[ff] .- max_frame_gap)) .&
                                    (framenumCDS .<= frames[ff]))
             if length(candidateind) < 2
                 maxID += 1
@@ -94,14 +94,14 @@ function precluster(smld::BasicSMLD{T,E},
             # which is a candidate for clustering.
             kdtree = NearestNeighbors.KDTree(xyCDS[:, candidateind])
             nnindices, nndist = NearestNeighbors.knn(kdtree, xyCDS[:, currentindFN],
-                min(nmaxnn + 1, length(candidateind)), true)
+                min(max_neighbors + 1, length(candidateind)), true)
 
             # Assign localizations to clusters based on `nndist`.
             for ii in 1:nperframe[ff]
                 # Determine which candidates meet our distance cutoff.
                 se_sum = mean_seCDS[currentindFN[ii]] .+
                          mean_seCDS[candidateind[nnindices[ii]]]
-                validnninds = nnindices[ii][nndist[ii].<=(nsigmadev*se_sum)]
+                validnninds = nnindices[ii][nndist[ii].<=(max_sigma_dist*se_sum)]
 
                 # Update connectIDCDS to reflect the new clusters.
                 updateinds = unique([currentindFN[ii]
@@ -130,7 +130,7 @@ function precluster(smld::BasicSMLD{T,E},
     for i in 1:n_emitters
         e = emitters[i]
         new_emitters[i] = SMLMData.Emitter2DFit{ET}(
-            e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
+            e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy, e.σ_photons, e.σ_bg,
             e.frame, e.dataset, connectID_compressed[i], e.id
         )
     end

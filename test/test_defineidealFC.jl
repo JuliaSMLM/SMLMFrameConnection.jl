@@ -18,14 +18,14 @@
         ]
         smld = make_test_smld(emitters; n_frames=3)
 
-        smld_connected, smld_combined = defineidealFC(smld; maxframegap=5)
+        smld_connected, smld_combined = defineidealFC(smld; max_frame_gap=5)
 
         # Should have 2 combined localizations (one per unique emitter)
         @test length(smld_combined.emitters) == 2
     end
 
-    @testset "respects maxframegap" begin
-        # Same emitter (track_id=1) but with frame gap > maxframegap
+    @testset "respects max_frame_gap" begin
+        # Same emitter (track_id=1) but with frame gap > max_frame_gap
         emitters = [
             make_emitter(5.0, 5.0, 1; track_id=1),
             make_emitter(5.0, 5.0, 2; track_id=1),
@@ -34,8 +34,8 @@
         ]
         smld = make_test_smld(emitters; n_frames=11)
 
-        # With maxframegap=5, should split into 2 blinking events
-        smld_connected, smld_combined = defineidealFC(smld; maxframegap=5)
+        # With max_frame_gap=5, should split into 2 blinking events
+        smld_connected, smld_combined = defineidealFC(smld; max_frame_gap=5)
 
         @test length(smld_combined.emitters) == 2
     end
@@ -45,7 +45,7 @@
         emitters = [make_emitter(5.0, 5.0, i; track_id=1) for i in 1:5]
         smld = make_test_smld(emitters; n_frames=5)
 
-        _, smld_combined = defineidealFC(smld; maxframegap=5)
+        _, smld_combined = defineidealFC(smld; max_frame_gap=5)
 
         @test length(smld_combined.emitters) == 1
     end
@@ -60,7 +60,7 @@
         ]
         smld = make_test_smld(emitters; n_frames=4)
 
-        _, smld_combined = defineidealFC(smld; maxframegap=5)
+        _, smld_combined = defineidealFC(smld; max_frame_gap=5)
 
         # Should have 2 combined localizations (one per emitter identity)
         @test length(smld_combined.emitters) == 2

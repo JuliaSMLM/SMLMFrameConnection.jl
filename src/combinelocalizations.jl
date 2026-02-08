@@ -21,6 +21,7 @@ function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.Abstra
     y = [e.y for e in emitters][sortindices]
     σ_x = [e.σ_x for e in emitters][sortindices]
     σ_y = [e.σ_y for e in emitters][sortindices]
+    σ_xy = [e.σ_xy for e in emitters][sortindices]
     photons = [e.photons for e in emitters][sortindices]
     σ_photons = [e.σ_photons for e in emitters][sortindices]
     bg = [e.bg for e in emitters][sortindices]
@@ -42,6 +43,7 @@ function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.Abstra
     y_combined = Vector{ET}(undef, nclusters)
     σ_x_combined = Vector{ET}(undef, nclusters)
     σ_y_combined = Vector{ET}(undef, nclusters)
+    σ_xy_combined = Vector{ET}(undef, nclusters)
     photons_combined = Vector{ET}(undef, nclusters)
     σ_photons_combined = Vector{ET}(undef, nclusters)
     bg_combined = Vector{ET}(undef, nclusters)
@@ -53,14 +55,46 @@ function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.Abstra
 
     for nn in 1:nclusters
         indices = (1:nperID[nn]) .+ ncumulative[nn]
-        x_combined[nn] = StatsBase.mean(x[indices], weights(1.0 ./ σ_x[indices] .^ 2))
-        y_combined[nn] = StatsBase.mean(y[indices], weights(1.0 ./ σ_y[indices] .^ 2))
-        σ_x_combined[nn] = sqrt(1.0 / sum(1.0 ./ σ_x[indices] .^ 2))
-        σ_y_combined[nn] = sqrt(1.0 / sum(1.0 ./ σ_y[indices] .^ 2))
+
+        # Combine positions using precision-weighted mean with full 2x2 covariance.
+        # For each measurement i: Σᵢ = [σ_x² σ_xy; σ_xy σ_y²], Pᵢ = Σᵢ⁻¹
+        # Combined: Σ_comb = (Σ Pᵢ)⁻¹, pos_comb = Σ_comb * Σ(Pᵢ * posᵢ)
+        P_sum = zeros(ET, 2, 2)
+        μ_weighted = zeros(ET, 2)
+        for i in indices
+            det_i = σ_x[i]^2 * σ_y[i]^2 - σ_xy[i]^2
+            det_i = max(det_i, eps(ET))  # Ensure positive definite
+            # Precision matrix: P = [σ_y² -σ_xy; -σ_xy σ_x²] / det
+            P11 = σ_y[i]^2 / det_i
+            P22 = σ_x[i]^2 / det_i
+            P12 = -σ_xy[i] / det_i
+            P_sum[1,1] += P11
+            P_sum[2,2] += P22
+            P_sum[1,2] += P12
+            P_sum[2,1] += P12
+            μ_weighted[1] += P11 * x[i] + P12 * y[i]
+            μ_weighted[2] += P12 * x[i] + P22 * y[i]
+        end
+
+        # Combined covariance = inverse of summed precision
+        det_P = P_sum[1,1] * P_sum[2,2] - P_sum[1,2]^2
+        Σ_comb_11 = P_sum[2,2] / det_P  # σ_x²
+        Σ_comb_22 = P_sum[1,1] / det_P  # σ_y²
+        Σ_comb_12 = -P_sum[1,2] / det_P  # σ_xy
+
+        # Combined position
+        x_combined[nn] = Σ_comb_11 * μ_weighted[1] + Σ_comb_12 * μ_weighted[2]
+        y_combined[nn] = Σ_comb_12 * μ_weighted[1] + Σ_comb_22 * μ_weighted[2]
+        σ_x_combined[nn] = sqrt(Σ_comb_11)
+        σ_y_combined[nn] = sqrt(Σ_comb_22)
+        σ_xy_combined[nn] = Σ_comb_12
+
+        # Photons and background: sum (independent measurements)
         photons_combined[nn] = sum(photons[indices])
         σ_photons_combined[nn] = sqrt(sum(σ_photons[indices] .^ 2))
         bg_combined[nn] = sum(bg[indices])
         σ_bg_combined[nn] = sqrt(sum(σ_bg[indices] .^ 2))
+
         connectID_combined[nn] = connectID[indices[1]]
         framenum_combined[nn] = framenum[indices[1]]
         datasetnum_combined[nn] = datasetnum[indices[1]]
@@ -74,6 +108,7 @@ function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.Abstra
             x_combined[nn], y_combined[nn],
             photons_combined[nn], bg_combined[nn],
             σ_x_combined[nn], σ_y_combined[nn],
+            σ_xy_combined[nn],
             σ_photons_combined[nn], σ_bg_combined[nn],
             framenum_combined[nn], datasetnum_combined[nn],
             connectID_combined[nn], id_combined[nn]
