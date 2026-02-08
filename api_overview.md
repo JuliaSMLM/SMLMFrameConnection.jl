@@ -1,6 +1,6 @@
 # SMLMFrameConnection API Overview
 
-Frame-connection for 2D SMLM data: combines repeated localizations of blinking fluorophores into higher-precision localizations.
+Frame-connection for 2D SMLM data: linking localizations from the same fluorophore blinking event across consecutive frames into single, higher-precision localizations. Uses spatiotemporal LAP assignment to optimally connect temporally adjacent detections based on spatial proximity and estimated blinking kinetics.
 
 ## Main Functions
 
@@ -26,7 +26,7 @@ Combines emitters sharing the same `track_id` using MLE weighted mean. Use when 
 
 ### defineidealFC
 ```julia
-defineidealFC(smld::BasicSMLD; maxframegap::Int=5) -> (smld_connected, smld_combined)
+(smld_connected, smld_combined) = defineidealFC(smld::BasicSMLD; max_frame_gap::Int=5)
 ```
 For simulated data where `track_id` indicates ground-truth emitter ID. Useful for validation/benchmarking.
 
@@ -34,11 +34,11 @@ For simulated data where `track_id` indicates ground-truth emitter ID. Useful fo
 
 ### FrameConnectConfig
 ```julia
-@kwdef struct FrameConnectConfig
-    nnearestclusters::Int = 2   # Nearest preclusters for local density estimation
-    nsigmadev::Float64 = 5.0    # Sigma multiplier for preclustering distance threshold
-    maxframegap::Int = 5        # Maximum frame gap for temporal adjacency
-    nmaxnn::Int = 2             # Maximum nearest-neighbors for precluster membership
+@kwdef struct FrameConnectConfig <: AbstractSMLMConfig
+    n_density_neighbors::Int = 2   # Nearest preclusters for local density estimation
+    max_sigma_dist::Float64 = 5.0    # Sigma multiplier for preclustering distance threshold
+    max_frame_gap::Int = 5        # Maximum frame gap for temporal adjacency
+    max_neighbors::Int = 2             # Maximum nearest-neighbors for precluster membership
 end
 ```
 Configuration parameters for frame connection. Use with `frameconnect(smld, config)` or pass fields as kwargs to `frameconnect(smld; kwargs...)`.
@@ -46,16 +46,16 @@ Configuration parameters for frame connection. Use with `frameconnect(smld, conf
 **Example:**
 ```julia
 # Create config with custom settings
-config = FrameConnectConfig(maxframegap=10, nsigmadev=3.0)
+config = FrameConnectConfig(max_frame_gap=10, max_sigma_dist=3.0)
 (combined, info) = frameconnect(smld, config)
 
 # Equivalent kwargs form
-(combined, info) = frameconnect(smld; maxframegap=10, nsigmadev=3.0)
+(combined, info) = frameconnect(smld; max_frame_gap=10, max_sigma_dist=3.0)
 ```
 
 ### FrameConnectInfo{T}
 ```julia
-struct FrameConnectInfo{T}
+struct FrameConnectInfo{T} <: AbstractSMLMInfo
     connected::BasicSMLD{T}       # Input with track_id assigned (uncombined)
     n_input::Int                  # Number of input localizations
     n_tracks::Int                 # Number of tracks formed
@@ -64,7 +64,7 @@ struct FrameConnectInfo{T}
     k_off::Float64                # Rate: visible → dark (1/frame)
     k_bleach::Float64             # Rate: photobleaching (1/frame)
     p_miss::Float64               # Probability of missed detection
-    initialdensity::Vector{Float64}  # Emitter density per cluster (emitters/μm²)
+    initial_density::Vector{Float64}  # Emitter density per cluster (emitters/μm²)
     elapsed_s::Float64            # Wall time in seconds
     algorithm::Symbol             # Algorithm used (:lap)
     n_preclusters::Int            # Number of preclusters formed
@@ -80,15 +80,15 @@ track_ids = [e.track_id for e in info.connected.emitters]
 ### ParamStruct
 ```julia
 mutable struct ParamStruct
-    initialdensity::Vector{Float64}  # Emitter density per cluster (emitters/μm²)
-    nnearestclusters::Int            # Clusters for density estimation
+    initial_density::Vector{Float64}  # Emitter density per cluster (emitters/μm²)
+    n_density_neighbors::Int            # Clusters for density estimation
     k_on::Float64                    # Rate: dark → visible (1/frame)
     k_off::Float64                   # Rate: visible → dark (1/frame)
     k_bleach::Float64                # Rate: photobleaching (1/frame)
     p_miss::Float64                  # Probability of missing localization when on
-    nsigmadev::Float64               # Preclustering threshold multiplier
-    maxframegap::Int                 # Max frame gap in preclusters
-    nmaxnn::Int                      # Max nearest-neighbors for preclustering
+    max_sigma_dist::Float64               # Preclustering threshold multiplier
+    max_frame_gap::Int                 # Max frame gap in preclusters
+    max_neighbors::Int                      # Max nearest-neighbors for preclustering
 end
 ```
 
@@ -123,7 +123,7 @@ Output `combined` contains emitters with:
 
 ## Dependencies
 
-- SMLMData.jl (v0.6+): BasicSMLD, Emitter types
+- SMLMData.jl (v0.7): BasicSMLD, Emitter types, AbstractSMLMConfig, AbstractSMLMInfo
 - Hungarian.jl: Linear assignment problem solver
 - NearestNeighbors.jl: Spatial clustering
 - Optim.jl: Parameter estimation

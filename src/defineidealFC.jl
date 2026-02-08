@@ -3,7 +3,7 @@ using SMLMData
 """
     connect1DS(smld::BasicSMLD{T,E}, dataset::Int,
                connectID::Vector{Int}, maxID::Int;
-               maxframegap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
+               max_frame_gap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
 
 Define the "ideal" frame-connection result for simulated `smld` with one dataset.
 
@@ -17,7 +17,7 @@ call defineidealFC().
 - `dataset`: Dataset number to be connected.
 - `connectID`: Current connection IDs for all emitters.
 - `maxID`: Current maximum ID value.
-- `maxframegap`: Maximum frame gap allowed between localizations connected in
+- `max_frame_gap`: Maximum frame gap allowed between localizations connected in
                  the "ideal" result.
 
 # Returns
@@ -25,7 +25,7 @@ call defineidealFC().
 """
 function connect1DS(smld::BasicSMLD{T,E}, dataset::Int,
                     connectID::Vector{Int}, maxID::Int;
-                    maxframegap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
+                    max_frame_gap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
     emitters = smld.emitters
 
     # Find indices for current dataset
@@ -58,13 +58,13 @@ function connect1DS(smld::BasicSMLD{T,E}, dataset::Int,
         # If all of these localizations are within the framegap, no action is
         # needed (they already share the same connectID).
         framediff = diff(sortedframes)
-        if all(framediff .<= maxframegap)
+        if all(framediff .<= max_frame_gap)
             continue
         end
 
         # Determine which localizations we can combine.
         for ff = 1:length(framediff)
-            if framediff[ff] <= maxframegap
+            if framediff[ff] <= max_frame_gap
                 # Connect these localizations.
                 connectID_DS[sorted_local_inds[ff+1]] =
                     connectID_DS[sorted_local_inds[ff]]
@@ -85,7 +85,7 @@ end
 """
     smld_connected, smld_combined = defineidealFC(
         smld::BasicSMLD{T,E};
-        maxframegap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
+        max_frame_gap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
 
 Define the "ideal" frame-connection result for a simulated `smld`.
 
@@ -94,15 +94,15 @@ This function defines the "ideal" frame connection result from a simulation.
 That is to say, for a simulated BasicSMLD structure `smld` with `track_id` field
 populated to indicate emitter membership of localizations, this function will
 generate an "ideal" FC result which combines all blinking events that appeared
-with frame gaps less than `maxframegap` of one another.  Note that for very
+with frame gaps less than `max_frame_gap` of one another.  Note that for very
 high duty cycles, multiple blinking events might be mistakingly combined by
-this method (i.e., if the emitter blinks back on within `maxframegap` frames
+this method (i.e., if the emitter blinks back on within `max_frame_gap` frames
 of its previous blink).  Note that localizations are not allowed to be
 connected across datasets.
 
 # Inputs
 - `smld`: BasicSMLD with track_id populated to indicate emitter ID.
-- `maxframegap`: Maximum frame gap allowed between localizations connected in
+- `max_frame_gap`: Maximum frame gap allowed between localizations connected in
                  the "ideal" result.
 
 # Outputs
@@ -111,7 +111,7 @@ connected across datasets.
 - `smld_combined`: Ideal frame-connection result with localizations combined.
 """
 function defineidealFC(smld::BasicSMLD{T,E};
-                       maxframegap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
+                       max_frame_gap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
     emitters = smld.emitters
 
     # Initialize connectID from track_id
@@ -123,7 +123,7 @@ function defineidealFC(smld::BasicSMLD{T,E};
 
     # Loop through datasets and combine localizations as appropriate.
     for ds in datasets
-        connectID, maxID = connect1DS(smld, ds, connectID, maxID; maxframegap = maxframegap)
+        connectID, maxID = connect1DS(smld, ds, connectID, maxID; max_frame_gap = max_frame_gap)
     end
 
     # Compress connectID

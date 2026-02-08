@@ -31,8 +31,8 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
     k_off = params.k_off
     k_bleach = params.k_bleach
     p_miss = params.p_miss
-    rho_0 = params.initialdensity[clusterind]
-    maxframegap = params.maxframegap
+    rho_0 = params.initial_density[clusterind]
+    max_frame_gap = params.max_frame_gap
 
     # Populate the upper-left "connection" block.
     nlocalizations = length(framenum)
@@ -89,8 +89,8 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
     indices = 1:nlocalizations
     framesint = Int32.(framenum)
     for nn in indices
-        deltaframe_past = minimum([maxframegap; framesint[nn]-startframe])
-        deltaframe_future = minimum([maxframegap; nframes-framesint[nn]])
+        deltaframe_past = minimum([max_frame_gap; framesint[nn]-startframe])
+        deltaframe_future = minimum([max_frame_gap; nframes-framesint[nn]])
         # Localization uncertainty ellipse area (μm²) to make density dimensionless
         # Area = π√det(Σ) where det(Σ) = σ_x²σ_y² - σ_xy²
         det_loc = x_se[nn]^2 * y_se[nn]^2 - xy_cov[nn]^2

@@ -29,7 +29,7 @@
         )
         smld = make_test_smld(emitters; n_frames=5)
 
-        (combined, info) = frameconnect(smld; maxframegap=5, nnearestclusters=1)
+        (combined, info) = frameconnect(smld; max_frame_gap=5, n_density_neighbors=1)
 
         # Target molecule should be combined (may have 5 background singles)
         # At minimum, we should have fewer emitters than input
@@ -48,7 +48,7 @@
         )
         smld = make_test_smld(emitters; n_frames=3)
 
-        (combined, info) = frameconnect(smld; maxframegap=5)
+        (combined, info) = frameconnect(smld; max_frame_gap=5)
 
         # Should combine into ~4 molecules (fewer than 12 input emitters)
         @test length(combined.emitters) <= 8
@@ -87,10 +87,10 @@
         @test info.k_off >= 0
         @test info.k_bleach >= 0
         @test 0 <= info.p_miss <= 1
-        @test !isempty(info.initialdensity)
+        @test !isempty(info.initial_density)
     end
 
-    @testset "respects maxframegap" begin
+    @testset "respects max_frame_gap" begin
         # Create molecules with gaps, plus background for density estimation
         emitters = vcat(
             make_blinking_molecule(5.0, 5.0, [1, 2, 3]),       # Frames 1-3
@@ -100,8 +100,8 @@
         )
         smld = make_test_smld(emitters; n_frames=12)
 
-        # With maxframegap=5, the two groups at (5,5) should NOT connect
-        (combined, info) = frameconnect(smld; maxframegap=5)
+        # With max_frame_gap=5, the two groups at (5,5) should NOT connect
+        (combined, info) = frameconnect(smld; max_frame_gap=5)
 
         # Should have at least 3 combined localizations (2 for split molecule + 2 background)
         @test length(combined.emitters) >= 3
@@ -144,7 +144,7 @@
         emitters = vcat(target_emitters, background)
         smld = make_test_smld(emitters; n_frames=n_locs)
 
-        (combined, info) = frameconnect(smld; maxframegap=n_locs, nnearestclusters=1)
+        (combined, info) = frameconnect(smld; max_frame_gap=n_locs, n_density_neighbors=1)
 
         # Find the combined target molecule (around position 5,5)
         target_combined = filter(e -> e.x < 10.0 && e.y < 10.0, combined.emitters)

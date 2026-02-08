@@ -2,13 +2,13 @@ using SMLMData
 using NearestNeighbors
 
 """
-    initialdensity = estimatedensities(smld::BasicSMLD{T,E},
+    initial_density = estimatedensities(smld::BasicSMLD{T,E},
         clusterdata::Vector{Matrix{Float32}}, params::ParamStruct) where {T, E<:SMLMData.AbstractEmitter}
 
 Estimate local emitter densities for clusters in `smld` and `clusterdata`.
 
 # Description
-The initial local densities `initialdensity` around each pre-cluster present in
+The initial local densities `initial_density` around each pre-cluster present in
 `smld`/`clusterdata` are estimated based on the local density of pre-clusters
 throughout the entire set of data as well as some of the rate parameters
 provided in `params`.
@@ -31,15 +31,15 @@ function estimatedensities(smld::BasicSMLD{T,E},
     # If only one cluster is present, we should return an answer right away and stop.
     if nclusters == 1
         if size(clusterdata[1], 1) == 1
-            initialdensity = 1.0
+            initial_density = 1.0
         else
             clusterarea = (maximum(clusterdata[1][:, 1]) - minimum(clusterdata[1][:, 1])) *
                           (maximum(clusterdata[1][:, 2]) - minimum(clusterdata[1][:, 2]))
-            initialdensity = (1 / clusterarea) *
+            initial_density = (1 / clusterarea) *
                              ((params.k_bleach / params.k_off) / (1 - params.p_miss)) /
                              (1 - exp(-params.k_bleach * dutycycle * (maxframe - 1)))
         end
-        return [initialdensity]  # Return as vector to match ParamStruct.initialdensity type
+        return [initial_density]  # Return as vector to match ParamStruct.initial_density type
     end
 
     # Determine the center of all clusters assuming each arose from the same
@@ -79,7 +79,7 @@ function estimatedensities(smld::BasicSMLD{T,E},
 
     # Estimate the local cluster density based on the distance to
     # nearest-neighbors.
-    kneighbors = minimum([params.nnearestclusters; nclusters - 1])
+    kneighbors = minimum([params.n_density_neighbors; nclusters - 1])
     kneighbors = max(kneighbors, 1)  # Ensure at least 1 neighbor
     # Ensure we don't request more neighbors than available (including self)
     kneighbors = min(kneighbors, nclusters - 1)
@@ -109,10 +109,10 @@ function estimatedensities(smld::BasicSMLD{T,E},
     # Estimate the density of underlying emitters based on cluster density.
     lambda1 = params.k_bleach * dutycycle
     lambda2 = (params.k_on + params.k_off + params.k_bleach) - lambda1
-    initialdensity = clusterdensity *
+    initial_density = clusterdensity *
                      (1.0 / dutycycle) * (1.0 / params.k_off) * (1.0 / (1.0 - params.p_miss)) ./
                      ((1.0 / lambda1) * (1.0 - exp(-lambda1 * (maxframe - 1.0))) -
                       (1.0 / lambda2) * (1.0 - exp(-lambda2 * (maxframe - 1.0))))
 
-    return initialdensity
+    return initial_density
 end

@@ -14,7 +14,7 @@ Secondary output from `frameconnect()` containing track assignments and algorith
 - `k_off::Float64`: Estimated off rate (1/frame)
 - `k_bleach::Float64`: Estimated bleach rate (1/frame)
 - `p_miss::Float64`: Probability of missed detection
-- `initialdensity::Vector{Float64}`: Initial density estimate per cluster (emitters/μm²)
+- `initial_density::Vector{Float64}`: Initial density estimate per cluster (emitters/μm²)
 - `elapsed_s::Float64`: Wall time in seconds
 - `algorithm::Symbol`: Algorithm used (`:lap`)
 - `n_preclusters::Int`: Number of preclusters formed
@@ -45,7 +45,7 @@ struct FrameConnectInfo{T} <: AbstractSMLMInfo
     k_off::Float64
     k_bleach::Float64
     p_miss::Float64
-    initialdensity::Vector{Float64}
+    initial_density::Vector{Float64}
     elapsed_s::Float64
     algorithm::Symbol
     n_preclusters::Int

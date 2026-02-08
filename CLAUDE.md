@@ -31,7 +31,7 @@ Test files must `include("test/test_helpers.jl")` first since `runtests.jl` load
 
 `frameconnect()` in `frameconnect.jl` is the main entry point. It orchestrates a 4-stage pipeline:
 
-1. **Precluster** (`precluster.jl`): Spatiotemporal clustering using KDTree nearest-neighbor search. Groups localizations within `nsigmadev * mean(σ)` distance and `maxframegap` frames. Stores cluster assignments in emitter `track_id` fields.
+1. **Precluster** (`precluster.jl`): Spatiotemporal clustering using KDTree nearest-neighbor search. Groups localizations within `max_sigma_dist * mean(σ)` distance and `max_frame_gap` frames. Stores cluster assignments in emitter `track_id` fields.
 
 2. **Estimate parameters** (`estimateparams.jl`, `estimatedensities.jl`): Estimates photophysics rates (k_on, k_off, k_bleach, p_miss) from precluster statistics. Uses Optim.jl NelderMead to fit cumulative localization counts. `estimatedensities.jl` estimates local emitter density per cluster using KDTree neighbor distances.
 

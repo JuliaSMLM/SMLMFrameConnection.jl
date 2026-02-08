@@ -20,13 +20,13 @@ using their MLE position estimate assuming Gaussian noise.
 - `config::FrameConnectConfig`: Configuration parameters (optional, can use kwargs instead)
 
 # Keyword Arguments (equivalent to FrameConnectConfig fields)
-- `nnearestclusters::Int=2`: Number of nearest preclusters used for local density
+- `n_density_neighbors::Int=2`: Number of nearest preclusters used for local density
                              estimates (see `estimatedensities`)
-- `nsigmadev::Float64=5.0`: Multiplier of localization errors that defines a
+- `max_sigma_dist::Float64=5.0`: Multiplier of localization errors that defines a
                             pre-clustering distance threshold (see `precluster`)
-- `maxframegap::Int=5`: Maximum frame gap between temporally adjacent localizations
+- `max_frame_gap::Int=5`: Maximum frame gap between temporally adjacent localizations
                         in a precluster (see `precluster`)
-- `nmaxnn::Int=2`: Maximum number of nearest-neighbors inspected for precluster
+- `max_neighbors::Int=2`: Maximum number of nearest-neighbors inspected for precluster
                    membership (see `precluster`)
 
 # Returns
@@ -38,10 +38,10 @@ A tuple `(combined, info)`:
 ```julia
 # Using kwargs (most common)
 (combined, info) = frameconnect(smld)
-(combined, info) = frameconnect(smld; maxframegap=10)
+(combined, info) = frameconnect(smld; max_frame_gap=10)
 
 # Using config struct
-config = FrameConnectConfig(maxframegap=10, nsigmadev=3.0)
+config = FrameConnectConfig(max_frame_gap=10, max_sigma_dist=3.0)
 (combined, info) = frameconnect(smld, config)
 
 println("Connected \$(info.n_input) → \$(info.n_combined) localizations")
@@ -62,10 +62,10 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
 
     # Prepare a ParamStruct to keep track of parameters used.
     params = ParamStruct()
-    params.nnearestclusters = config.nnearestclusters
-    params.nsigmadev = config.nsigmadev
-    params.maxframegap = config.maxframegap
-    params.nmaxnn = config.nmaxnn
+    params.n_density_neighbors = config.n_density_neighbors
+    params.max_sigma_dist = config.max_sigma_dist
+    params.max_frame_gap = config.max_frame_gap
+    params.max_neighbors = config.max_neighbors
 
     # Generate pre-clusters of localizations in `smld`.
     smld_preclustered = precluster(smld, params)
@@ -77,7 +77,7 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
         estimateparams(smld_preclustered, clusterdata)
 
     # Estimate the underlying density of emitters.
-    params.initialdensity =
+    params.initial_density =
         estimatedensities(smld_preclustered, clusterdata, params)
 
     # Get nframes
@@ -120,7 +120,7 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
         params.k_off,
         params.k_bleach,
         params.p_miss,
-        params.initialdensity,
+        params.initial_density,
         elapsed_s,
         :lap,
         n_preclusters

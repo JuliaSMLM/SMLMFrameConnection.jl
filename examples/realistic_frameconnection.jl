@@ -119,10 +119,10 @@ function main()
     stats = @timed begin
         frameconnect(
             smld_input;
-            nnearestclusters = 2,
-            nsigmadev = 5.0,
-            maxframegap = 10,  # Allow gaps since k_on=0.03 means reblinking
-            nmaxnn = 2
+            n_density_neighbors = 2,
+            max_sigma_dist = 5.0,
+            max_frame_gap = 10,  # Allow gaps since k_on=0.03 means reblinking
+            max_neighbors = 2
         )
     end
 
@@ -187,7 +187,7 @@ function main()
     println("-" ^ 70)
 
     # Use original smld_noisy which has true track_id from simulation
-    smld_ideal_connected, smld_ideal_combined = defineidealFC(smld_noisy; maxframegap = 10)
+    smld_ideal_connected, smld_ideal_combined = defineidealFC(smld_noisy; max_frame_gap = 10)
     n_ideal = length(smld_ideal_combined.emitters)
 
     @printf("  True emitters (SMLMSim):    %d\n", n_true_emitters)

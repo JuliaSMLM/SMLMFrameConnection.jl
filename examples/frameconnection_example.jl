@@ -97,10 +97,10 @@ println("  True molecules: $(length(unique(e.track_id for e in smld_truth.emitte
 println("\nRunning frame connection...")
 (combined, info) = frameconnect(
     smld_input;
-    nnearestclusters = 2,
-    nsigmadev = 5.0,
-    maxframegap = 5,
-    nmaxnn = 2
+    n_density_neighbors = 2,
+    max_sigma_dist = 5.0,
+    max_frame_gap = 5,
+    max_neighbors = 2
 )
 
 println("  Combined localizations: $(length(combined.emitters))")
@@ -108,7 +108,7 @@ println("  Time: $(info.elapsed_s) seconds")
 
 # Compare with ideal result (using ground truth track_id)
 println("\nComputing ideal frame connection (ground truth)...")
-smld_ideal_connected, smld_ideal_combined = defineidealFC(smld_truth; maxframegap = 5)
+smld_ideal_connected, smld_ideal_combined = defineidealFC(smld_truth; max_frame_gap = 5)
 println("  Ideal combined: $(length(smld_ideal_combined.emitters))")
 
 # Print estimated parameters

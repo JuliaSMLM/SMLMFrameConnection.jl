@@ -4,7 +4,7 @@ CurrentModule = SMLMFrameConnection
 
 # SMLMFrameConnection
 
-Frame-connection for 2D single molecule localization microscopy (SMLM) data. Combines repeated localizations of blinking fluorophores into higher-precision localizations using the algorithm from [Schodt & Lidke 2021](https://doi.org/10.3389/fbinf.2021.724325).
+Frame-connection for 2D single molecule localization microscopy (SMLM) data: linking localizations from the same fluorophore blinking event across consecutive frames into single, higher-precision localizations. Uses spatiotemporal LAP assignment to optimally connect temporally adjacent detections based on spatial proximity and estimated blinking kinetics. See [Schodt & Lidke 2021](https://doi.org/10.3389/fbinf.2021.724325).
 
 ## Installation
 
@@ -16,12 +16,13 @@ Pkg.add("SMLMFrameConnection")
 ## Quick Start
 
 ```julia
-using SMLMData, SMLMFrameConnection
+using SMLMFrameConnection
 
 # Run frame connection on your BasicSMLD with Emitter2DFit emitters
-smld_connected, smld_preclustered, smld_combined, params = frameconnect(smld)
+(combined, info) = frameconnect(smld)
 
-# smld_combined is the main output - higher precision localizations
+# combined is the main output - higher precision localizations
+# info contains track assignments and algorithm metadata
 ```
 
 ## Input Requirements
@@ -48,24 +49,24 @@ Input `BasicSMLD` must contain `Emitter2DFit` emitters with:
 
 | Output | Description |
 |--------|-------------|
-| `smld_combined` | **Main output** - combined high-precision localizations |
-| `smld_connected` | Original localizations with `track_id` labels |
-| `smld_preclustered` | Intermediate result (debugging) |
-| `params` | Estimated photophysics parameters |
+| `combined` | **Main output** - combined high-precision localizations |
+| `info.connected` | Original localizations with `track_id` assigned |
+| `info.n_tracks` | Number of tracks formed |
+| `info.elapsed_s` | Wall time in seconds |
 
 ## Parameters
 
 ```julia
 frameconnect(smld;
-    nnearestclusters = 2,   # Clusters for density estimation
-    nsigmadev = 5.0,        # Distance threshold multiplier
-    maxframegap = 5,        # Max frame gap for connections
-    nmaxnn = 2              # Nearest neighbors for preclustering
+    n_density_neighbors = 2,   # Clusters for density estimation
+    max_sigma_dist = 5.0,        # Distance threshold multiplier
+    max_frame_gap = 5,        # Max frame gap for connections
+    max_neighbors = 2              # Nearest neighbors for preclustering
 )
 ```
 
-- `nsigmadev`: Higher values allow connections over larger distances
-- `maxframegap`: Increase for dyes with long dark states (dSTORM: 10-20)
+- `max_sigma_dist`: Higher values allow connections over larger distances
+- `max_frame_gap`: Increase for dyes with long dark states (dSTORM: 10-20)
 
 ## API Reference
 

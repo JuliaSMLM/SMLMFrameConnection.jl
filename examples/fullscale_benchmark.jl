@@ -83,10 +83,10 @@ function benchmark_single_dataset(smld::BasicSMLD)
     stats = @timed begin
         frameconnect(
             smld;
-            nnearestclusters = 2,
-            nsigmadev = 5.0,
-            maxframegap = 10,
-            nmaxnn = 2
+            n_density_neighbors = 2,
+            max_sigma_dist = 5.0,
+            max_frame_gap = 10,
+            max_neighbors = 2
         )
     end
 
