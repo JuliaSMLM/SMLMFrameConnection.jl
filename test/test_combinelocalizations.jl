@@ -122,6 +122,46 @@
         @test result.emitters[1].photons ≈ 4500.0 atol=1e-10
     end
 
+    @testset "Float32 precision at SMLM scale" begin
+        # Realistic SMLM values: σ ~ 6nm = 0.006μm in Float32
+        # This tests that precision-weighted combination doesn't lose
+        # accuracy due to Float32 determinant underflow
+        σ = Float32(0.006)  # 6 nm
+        x0 = Float32(25.0)
+        y0 = Float32(25.0)
+
+        emitters = [
+            Emitter2DFit{Float32}(
+                x0 + Float32(0.001), y0 - Float32(0.001), 1000f0, 10f0,
+                σ, σ, 0f0, 31.6f0, 3.16f0, 1, 1, 1, 0),
+            Emitter2DFit{Float32}(
+                x0 - Float32(0.001), y0 + Float32(0.001), 1200f0, 12f0,
+                σ, σ, 0f0, 34.6f0, 3.46f0, 2, 1, 1, 0),
+            Emitter2DFit{Float32}(
+                x0, y0, 1100f0, 11f0,
+                σ, σ, 0f0, 33.2f0, 3.32f0, 3, 1, 1, 0),
+        ]
+
+        smld = make_test_smld(emitters; n_frames=3)
+        result = combinelocalizations(smld)
+
+        @test length(result.emitters) == 1
+        e = result.emitters[1]
+
+        # Combined σ must be LESS than individual σ (σ/√3 for equal weights)
+        @test e.σ_x < σ
+        @test e.σ_y < σ
+
+        # Expected: σ/√3 ≈ 0.00346
+        expected_σ = σ / sqrt(Float32(3))
+        @test e.σ_x ≈ expected_σ atol=1e-5
+        @test e.σ_y ≈ expected_σ atol=1e-5
+
+        # Position near centroid
+        @test e.x ≈ x0 atol=0.002
+        @test e.y ≈ y0 atol=0.002
+    end
+
     @testset "preserves metadata" begin
         smld = make_prelabeled_smld()
         result = combinelocalizations(smld)
