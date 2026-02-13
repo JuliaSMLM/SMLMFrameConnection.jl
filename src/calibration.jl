@@ -190,9 +190,9 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     ss_tot = sum(bin_weights .* (bin_observed .- y_mean) .^ 2)
     r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : 0.0
 
-    if r_squared < 0.1
+    if B <= 0
         return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                "Poor fit quality (R² = $(round(r_squared, digits=3)))";
+                                "Non-positive slope B=$(round(B, digits=6)) (k² must be > 0)";
                                 n_tracks_filtered=n_tracks_filtered)
     end
 

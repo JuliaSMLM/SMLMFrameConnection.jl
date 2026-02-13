@@ -59,21 +59,26 @@ function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.Abstra
         # Combine positions using precision-weighted mean with full 2x2 covariance.
         # For each measurement i: Σᵢ = [σ_x² σ_xy; σ_xy σ_y²], Pᵢ = Σᵢ⁻¹
         # Combined: Σ_comb = (Σ Pᵢ)⁻¹, pos_comb = Σ_comb * Σ(Pᵢ * posᵢ)
-        P_sum = zeros(ET, 2, 2)
-        μ_weighted = zeros(ET, 2)
+        # Accumulate in Float64 to avoid precision loss (eps(Float32)=1.2e-7
+        # is larger than typical determinants for SMLM sigmas ~0.006 μm)
+        P_sum = zeros(Float64, 2, 2)
+        μ_weighted = zeros(Float64, 2)
         for i in indices
-            det_i = σ_x[i]^2 * σ_y[i]^2 - σ_xy[i]^2
-            det_i = max(det_i, eps(ET))  # Ensure positive definite
+            sx2 = Float64(σ_x[i])^2
+            sy2 = Float64(σ_y[i])^2
+            sxy = Float64(σ_xy[i])
+            det_i = sx2 * sy2 - sxy^2
+            det_i = max(det_i, eps(Float64))  # Ensure positive definite
             # Precision matrix: P = [σ_y² -σ_xy; -σ_xy σ_x²] / det
-            P11 = σ_y[i]^2 / det_i
-            P22 = σ_x[i]^2 / det_i
-            P12 = -σ_xy[i] / det_i
+            P11 = sy2 / det_i
+            P22 = sx2 / det_i
+            P12 = -sxy / det_i
             P_sum[1,1] += P11
             P_sum[2,2] += P22
             P_sum[1,2] += P12
             P_sum[2,1] += P12
-            μ_weighted[1] += P11 * x[i] + P12 * y[i]
-            μ_weighted[2] += P12 * x[i] + P22 * y[i]
+            μ_weighted[1] += P11 * Float64(x[i]) + P12 * Float64(y[i])
+            μ_weighted[2] += P12 * Float64(x[i]) + P22 * Float64(y[i])
         end
 
         # Combined covariance = inverse of summed precision
@@ -82,12 +87,12 @@ function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.Abstra
         Σ_comb_22 = P_sum[1,1] / det_P  # σ_y²
         Σ_comb_12 = -P_sum[1,2] / det_P  # σ_xy
 
-        # Combined position
-        x_combined[nn] = Σ_comb_11 * μ_weighted[1] + Σ_comb_12 * μ_weighted[2]
-        y_combined[nn] = Σ_comb_12 * μ_weighted[1] + Σ_comb_22 * μ_weighted[2]
-        σ_x_combined[nn] = sqrt(Σ_comb_11)
-        σ_y_combined[nn] = sqrt(Σ_comb_22)
-        σ_xy_combined[nn] = Σ_comb_12
+        # Combined position (cast back to emitter precision)
+        x_combined[nn] = ET(Σ_comb_11 * μ_weighted[1] + Σ_comb_12 * μ_weighted[2])
+        y_combined[nn] = ET(Σ_comb_12 * μ_weighted[1] + Σ_comb_22 * μ_weighted[2])
+        σ_x_combined[nn] = ET(sqrt(Σ_comb_11))
+        σ_y_combined[nn] = ET(sqrt(Σ_comb_22))
+        σ_xy_combined[nn] = ET(Σ_comb_12)
 
         # Photons and background: sum (independent measurements)
         photons_combined[nn] = sum(photons[indices])
