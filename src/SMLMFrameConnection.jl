@@ -7,9 +7,11 @@ using NearestNeighbors
 using Optim
 using StatsBase
 using Statistics
+using LinearAlgebra
 
 export frameconnect, defineidealFC, combinelocalizations
 export FrameConnectConfig, FrameConnectInfo, ParamStruct
+export CalibrationConfig, CalibrationResult
 
 include("structdefinitions.jl")
 include("connectinfo.jl")
@@ -25,6 +27,7 @@ include("linkclusters.jl")
 include("compress_connectID.jl")
 include("combinelocalizations.jl")
 include("connectlocalizations.jl")
+include("calibration.jl")
 include("frameconnect.jl")
 
 

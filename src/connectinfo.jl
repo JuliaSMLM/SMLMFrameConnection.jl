@@ -18,6 +18,7 @@ Secondary output from `frameconnect()` containing track assignments and algorith
 - `elapsed_s::Float64`: Wall time in seconds
 - `algorithm::Symbol`: Algorithm used (`:lap`)
 - `n_preclusters::Int`: Number of preclusters formed
+- `calibration::Union{CalibrationResult, Nothing}`: Calibration diagnostics (nothing if disabled)
 
 # Rate Parameter Interpretation
 
@@ -34,6 +35,11 @@ The rate parameters describe the photophysics of blinking fluorophores:
 println("Connected \$(info.n_input) → \$(info.n_combined) localizations")
 println("Formed \$(info.n_tracks) tracks in \$(info.elapsed_s)s")
 # Access track assignments via info.connected
+# Check calibration results if enabled
+if info.calibration !== nothing
+    println("k_scale = \$(info.calibration.k_scale)")
+    println("σ_motion = \$(info.calibration.sigma_motion_nm) nm")
+end
 ```
 """
 struct FrameConnectInfo{T} <: AbstractSMLMInfo
@@ -49,4 +55,5 @@ struct FrameConnectInfo{T} <: AbstractSMLMInfo
     elapsed_s::Float64
     algorithm::Symbol
     n_preclusters::Int
+    calibration::Union{CalibrationResult, Nothing}
 end

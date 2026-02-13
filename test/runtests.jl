@@ -10,4 +10,5 @@ include("test_helpers.jl")
     include("test_combinelocalizations.jl")
     include("test_frameconnect.jl")
     include("test_defineidealFC.jl")
+    include("test_calibration.jl")
 end

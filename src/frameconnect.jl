@@ -104,8 +104,18 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
     smld_connected = BasicSMLD(new_emitters, smld.camera, smld.n_frames,
                                 smld.n_datasets, copy(smld.metadata))
 
+    # Optional uncertainty calibration (between connection and combination)
+    cal_result = nothing
+    smld_to_combine = smld_connected
+    if config.calibration !== nothing
+        cal_result = analyze_calibration(smld_connected, config.calibration)
+        if cal_result.calibration_applied
+            smld_to_combine = apply_calibration(smld_connected, cal_result)
+        end
+    end
+
     # Combine the connected localizations into higher precision localizations.
-    smld_combined = combinelocalizations(smld_connected)
+    smld_combined = combinelocalizations(smld_to_combine)
 
     elapsed_s = time() - t_start
 
@@ -123,7 +133,8 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
         params.initial_density,
         elapsed_s,
         :lap,
-        n_preclusters
+        n_preclusters,
+        cal_result
     )
 
     return (smld_combined, info)

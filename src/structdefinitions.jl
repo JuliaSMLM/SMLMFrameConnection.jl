@@ -1,6 +1,72 @@
 # This file defines some struct types used in the FrameConnection package.
 
 """
+    CalibrationConfig
+
+Configuration for optional uncertainty calibration within frame connection.
+
+Calibration analyzes frame-to-frame jitter within connected tracks to estimate
+a motion variance (`σ_motion²`) and CRLB scale factor (`k²`), then applies corrected
+uncertainties before track combination: `Σ_corrected = σ_motion² I + k² Σ_CRLB`.
+
+# Fields
+- `clamp_k_to_one::Bool=true`: Clamp k_scale to minimum of 1.0 (CRLB is a lower bound)
+- `filter_high_chi2::Bool=false`: Filter tracks with high chi² pairs before fitting
+- `chi2_filter_threshold::Float64=6.0`: Chi² threshold for track filtering (per pair)
+"""
+Base.@kwdef struct CalibrationConfig
+    clamp_k_to_one::Bool = true
+    filter_high_chi2::Bool = false
+    chi2_filter_threshold::Float64 = 6.0
+end
+
+"""
+    CalibrationResult
+
+Output diagnostics from uncertainty calibration. Returned in `FrameConnectInfo.calibration`
+when calibration is enabled.
+
+The calibration model fits: `observed_var = A + B * CRLB_var` where
+`A = σ_motion²` (additive motion/vibration variance) and `B = k²` (CRLB scale factor).
+
+# Fields
+- `sigma_motion_nm::Float64`: Estimated motion std dev in nm (√A × 1000)
+- `k_scale::Float64`: CRLB scale factor (√B, or clamped √B if clamp_k_to_one)
+- `A::Float64`: Fit intercept (σ_motion² in μm²)
+- `B::Float64`: Fit slope (k²)
+- `A_sigma::Float64`: Standard error of A
+- `B_sigma::Float64`: Standard error of B
+- `r_squared::Float64`: R² of the WLS fit
+- `mean_chi2::Float64`: Mean chi² across all frame-to-frame pairs
+- `n_pairs::Int`: Number of frame-to-frame pairs used in fit
+- `n_tracks_used::Int`: Number of tracks contributing pairs
+- `n_tracks_filtered::Int`: Number of tracks removed by chi² filter
+- `bin_centers::Vector{Float64}`: Bin centers (CRLB variance) for diagnostic plots
+- `bin_observed::Vector{Float64}`: Bin observed variance for diagnostic plots
+- `frame_shifts::Dict{Int, Vector{NTuple{2,Float64}}}`: Per-dataset (dx,dy) shifts for jitter plots
+- `calibration_applied::Bool`: Whether calibration was actually applied (false on fallback)
+- `warning::String`: Warning message if calibration fell back (empty if OK)
+"""
+struct CalibrationResult
+    sigma_motion_nm::Float64
+    k_scale::Float64
+    A::Float64
+    B::Float64
+    A_sigma::Float64
+    B_sigma::Float64
+    r_squared::Float64
+    mean_chi2::Float64
+    n_pairs::Int
+    n_tracks_used::Int
+    n_tracks_filtered::Int
+    bin_centers::Vector{Float64}
+    bin_observed::Vector{Float64}
+    frame_shifts::Dict{Int, Vector{NTuple{2,Float64}}}
+    calibration_applied::Bool
+    warning::String
+end
+
+"""
     FrameConnectConfig
 
 Configuration parameters for frame connection algorithm.
@@ -14,19 +80,22 @@ Configuration parameters for frame connection algorithm.
                         in a precluster (see `precluster`)
 - `max_neighbors::Int=2`: Maximum number of nearest-neighbors inspected for precluster
                    membership (see `precluster`)
+- `calibration::Union{CalibrationConfig, Nothing}=nothing`: Optional uncertainty calibration
 
 # Example
 ```julia
-# Using default config
-config = FrameConnectConfig()
+# Without calibration (default)
+(combined, info) = frameconnect(smld)
+
+# With calibration
+config = FrameConnectConfig(calibration=CalibrationConfig())
 (combined, info) = frameconnect(smld, config)
 
-# Custom config
-config = FrameConnectConfig(max_frame_gap=10, max_sigma_dist=3.0)
+# With calibration + chi2 filtering
+config = FrameConnectConfig(
+    calibration=CalibrationConfig(filter_high_chi2=true, chi2_filter_threshold=4.0)
+)
 (combined, info) = frameconnect(smld, config)
-
-# Kwargs form (equivalent to Config form)
-(combined, info) = frameconnect(smld; max_frame_gap=10, max_sigma_dist=3.0)
 ```
 """
 Base.@kwdef struct FrameConnectConfig <: AbstractSMLMConfig
@@ -34,6 +103,7 @@ Base.@kwdef struct FrameConnectConfig <: AbstractSMLMConfig
     max_sigma_dist::Float64 = 5.0
     max_frame_gap::Int = 5
     max_neighbors::Int = 2
+    calibration::Union{CalibrationConfig, Nothing} = nothing
 end
 
 """

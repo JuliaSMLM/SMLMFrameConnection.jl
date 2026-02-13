@@ -1,10 +1,11 @@
 name = "SMLMFrameConnection"
 uuid = "1517b1a9-81e8-461f-b994-92eb29599690"
-authors = ["klidke@unm.edu"]
 version = "0.2.0"
+authors = ["klidke@unm.edu"]
 
 [deps]
 Hungarian = "e91730f6-4275-51fb-a7a0-7064cfbd3b39"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 NearestNeighbors = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 SMLMData = "5488f106-40b8-4660-84c5-84a168990d1b"
@@ -13,6 +14,7 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [compat]
 Hungarian = "0.6, 0.7"
+LinearAlgebra = "1.12.0"
 NearestNeighbors = "0.4"
 Optim = "1, 2"
 SMLMData = "0.7"
