@@ -1,6 +1,6 @@
 name = "SMLMFrameConnection"
 uuid = "1517b1a9-81e8-461f-b994-92eb29599690"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["klidke@unm.edu"]
 
 [deps]
