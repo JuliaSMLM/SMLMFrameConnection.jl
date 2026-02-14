@@ -51,32 +51,36 @@ function estimateparams(smld::BasicSMLD{T,E},
     frames_m1 = frames .- 1.0
     nframes = length(frames)
 
-    # Allocation-free cost function for optimization
-    # Uses a loop instead of broadcasting to avoid temporary arrays
-    function costfunction(x)
-        nem, kon = x[1], x[2]
-        k_val = kon + k_offpbleach
-        l1 = kon * k_bleach / k_val
-        l2 = k_val - l1
-        coef = ceil(nem) * (1.0 - p_miss) * (kon / k_val)
+    # Type-stable cost function: `let` captures immutable bindings so the
+    # compiler infers concrete types and the inner loop is allocation-free.
+    costfunction = let k_offpbleach=k_offpbleach, p_miss=p_miss,
+                       k_bleach=k_bleach, frames_m1=frames_m1,
+                       nloccumulative=nloccumulative, nframes=nframes
+        function (x)
+            nem, kon = x[1], x[2]
+            k_val = kon + k_offpbleach
+            l1 = kon * k_bleach / k_val
+            l2 = k_val - l1
+            coef = ceil(nem) * (1.0 - p_miss) * (kon / k_val)
 
-        # Guard against division by zero
-        if l1 ≈ 0.0 || l2 ≈ 0.0
-            return 1e10
+            # Guard against division by zero
+            if l1 ≈ 0.0 || l2 ≈ 0.0
+                return 1e10
+            end
+
+            inv_l1 = 1.0 / l1
+            inv_l2 = 1.0 / l2
+
+            mse = 0.0
+            @inbounds for i in 1:nframes
+                fm1 = frames_m1[i]
+                pred = coef * (inv_l1 * (1.0 - exp(-l1 * fm1)) -
+                              inv_l2 * (1.0 - exp(-l2 * fm1)))
+                diff = nloccumulative[i] - pred
+                mse += diff * diff
+            end
+            return mse / nframes
         end
-
-        inv_l1 = 1.0 / l1
-        inv_l2 = 1.0 / l2
-
-        mse = 0.0
-        @inbounds for i in 1:nframes
-            fm1 = frames_m1[i]
-            pred = coef * (inv_l1 * (1.0 - exp(-l1 * fm1)) -
-                          inv_l2 * (1.0 - exp(-l2 * fm1)))
-            diff = nloccumulative[i] - pred
-            mse += diff * diff
-        end
-        return mse / nframes
     end
 
     lowerbound = [Float64(maximum(nlocperframe)); 1e-5]
