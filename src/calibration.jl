@@ -126,101 +126,117 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         end
     end
 
-    # Compute observed variance per pair (dx²/2 for each axis, since var(x1-x2)=var_x1+var_x2)
-    # The factor of 2 cancels: observed_diff_var = dx² (one sample), CRLB_pair_var = σ₁²+σ₂²
-    # For WLS binning: bin by CRLB_var, observe dx²
-    obs_var = dx_vec .^ 2 .+ dy_vec .^ 2  # total squared displacement
-    crlb_var = var_x_vec .+ var_y_vec       # total CRLB variance for pair
+    # Per-pair chi² filtering: remove pairs with chi² > 6.0 (double-fits, mismatches)
+    # This is critical -- reduces scatter in bins before fitting
+    chi2_per_pair = dx_vec .^ 2 ./ max.(var_x_vec, eps()) .+
+                    dy_vec .^ 2 ./ max.(var_y_vec, eps())
+    chi2_threshold = 6.0  # ~99.7% of chi²(2) is below this
+    good_mask = chi2_per_pair .<= chi2_threshold
 
-    # Check CRLB dynamic range -- if too narrow, WLS can't decompose A vs B
-    crlb_cv = std(crlb_var) / mean(crlb_var)
+    n_pairs_filtered = sum(.!good_mask)
+    dx_vec = dx_vec[good_mask]
+    dy_vec = dy_vec[good_mask]
+    var_x_vec = var_x_vec[good_mask]
+    var_y_vec = var_y_vec[good_mask]
+    n_pairs = length(dx_vec)
 
-    if crlb_cv < 0.1
-        # Narrow CRLB range: use ratio-of-means estimator (assumes A≈0)
-        # k² = mean(obs) / mean(crlb), sigma_motion = 0 by construction
-        mean_obs = mean(obs_var)
-        mean_crlb = mean(crlb_var)
-        B = mean_obs / mean_crlb
-        A = 0.0
-        A_sigma = 0.0
-        B_sigma = 0.0
-        r_squared = NaN  # not meaningful for ratio estimator
-        bin_centers = Float64[]
-        bin_observed = Float64[]
-    else
-        # Bin data for WLS fit
-        n_bins = min(20, max(5, n_pairs ÷ 50))
-        sorted_idx = sortperm(crlb_var)
-        bin_size = n_pairs ÷ n_bins
+    if n_pairs < 100
+        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
+                                "Too few pairs after chi² pair filtering ($n_pairs < 100)";
+                                n_tracks_filtered=n_tracks_filtered)
+    end
 
-        bin_centers = Float64[]
-        bin_observed = Float64[]
-        bin_weights = Float64[]
+    # Per-axis averaging and convert to nm² for fitting
+    reported_var_nm2 = ((var_x_vec .+ var_y_vec) ./ 2) .* 1e6
+    observed_var_nm2 = ((dx_vec .^ 2 .+ dy_vec .^ 2) ./ 2) .* 1e6
 
-        for b in 1:n_bins
-            i_start = (b - 1) * bin_size + 1
-            i_end = b == n_bins ? n_pairs : b * bin_size
-            bin_idx = sorted_idx[i_start:i_end]
-            n_bin = length(bin_idx)
-            n_bin == 0 && continue
+    # Equal-width bins with minimum 5 points per bin
+    x_min, x_max = extrema(reported_var_nm2)
+    x_range = x_max - x_min
+    n_bins = 20
+    bin_width = x_range / n_bins
 
-            bc = mean(crlb_var[bin_idx])
-            bo = mean(obs_var[bin_idx])
-            bv = var(obs_var[bin_idx])
-            w = bv > 0 ? n_bin / bv : 0.0
+    bin_centers = Float64[]
+    bin_observed = Float64[]
+    bin_var = Float64[]
+    n_per_bin = Int[]
 
-            push!(bin_centers, bc)
-            push!(bin_observed, bo)
-            push!(bin_weights, w)
+    for i in 1:n_bins
+        bin_lo = x_min + (i - 1) * bin_width
+        bin_hi = x_min + i * bin_width
+
+        if i == n_bins
+            mask = (reported_var_nm2 .>= bin_lo) .& (reported_var_nm2 .<= bin_hi)
+        else
+            mask = (reported_var_nm2 .>= bin_lo) .& (reported_var_nm2 .< bin_hi)
         end
 
-        # WLS fit: obs = A + B * crlb (A=2*σ_motion², B=k² for combined x+y)
-        # Using normal equations: [A; B] = (X'WX)⁻¹ X'Wy
-        n_b = length(bin_centers)
-        X = hcat(ones(n_b), bin_centers)
-        W = Diagonal(bin_weights)
-        XtWX = X' * W * X
-        XtWy = X' * W * bin_observed
+        bin_x = reported_var_nm2[mask]
+        bin_y = observed_var_nm2[mask]
 
-        det_XtWX = XtWX[1,1] * XtWX[2,2] - XtWX[1,2]^2
-        if abs(det_XtWX) < eps()
-            return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                    "Singular WLS matrix";
-                                    n_tracks_filtered=n_tracks_filtered)
-        end
-
-        # Solve
-        inv_XtWX = [XtWX[2,2] -XtWX[1,2]; -XtWX[1,2] XtWX[1,1]] / det_XtWX
-        coeffs = inv_XtWX * XtWy
-        A = coeffs[1]  # 2 * σ_motion² (x+y combined)
-        B = coeffs[2]  # k²
-
-        # Standard errors
-        A_sigma = sqrt(max(0.0, inv_XtWX[1,1]))
-        B_sigma = sqrt(max(0.0, inv_XtWX[2,2]))
-
-        # R²
-        y_pred = X * coeffs
-        ss_res = sum(bin_weights .* (bin_observed .- y_pred) .^ 2)
-        y_mean = sum(bin_weights .* bin_observed) / sum(bin_weights)
-        ss_tot = sum(bin_weights .* (bin_observed .- y_mean) .^ 2)
-        r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : 0.0
-
-        if B <= 0
-            return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                    "Non-positive slope B=$(round(B, digits=6)) (k² must be > 0)";
-                                    n_tracks_filtered=n_tracks_filtered)
+        if length(bin_x) >= 5
+            push!(bin_centers, mean(bin_x))
+            push!(bin_observed, mean(bin_y))
+            push!(bin_var, var(bin_y))
+            push!(n_per_bin, length(bin_x))
         end
     end
 
-    # Extract per-axis parameters: A/2 = σ_motion² per axis, B = k² per axis
-    sigma_motion_sq = max(0.0, A / 2)  # per-axis motion variance in μm²
+    n_valid_bins = length(bin_centers)
+    if n_valid_bins < 3
+        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
+                                "Too few valid bins ($n_valid_bins < 3)";
+                                n_tracks_filtered=n_tracks_filtered)
+    end
+
+    # WLS on binned data: weight = 1/var_of_bin_mean, normalized
+    var_of_bin_mean = bin_var ./ n_per_bin
+    weights = [v > 0 ? 1.0 / v : 0.0 for v in var_of_bin_mean]
+
+    if sum(weights) ≈ 0
+        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
+                                "All bin weights are zero";
+                                n_tracks_filtered=n_tracks_filtered)
+    end
+
+    weights = weights ./ sum(weights) .* n_valid_bins
+
+    X = hcat(ones(n_valid_bins), bin_centers)
+    W = Diagonal(weights)
+    XtWX = X' * W * X
+    XtWy = X' * W * bin_observed
+
+    det_XtWX = XtWX[1,1] * XtWX[2,2] - XtWX[1,2]^2
+    if abs(det_XtWX) < eps()
+        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
+                                "Singular WLS matrix";
+                                n_tracks_filtered=n_tracks_filtered)
+    end
+
+    coeffs = XtWX \ XtWy
+    A = coeffs[1]  # σ_motion² in nm²
+    B = coeffs[2]  # k²
+
+    # R² and standard errors
+    y_pred = X * coeffs
+    residuals = bin_observed .- y_pred
+    ss_res = sum(weights .* residuals .^ 2)
+    ss_tot = sum(weights .* (bin_observed .- mean(bin_observed)) .^ 2)
+    r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : NaN
+
+    mse = ss_res / max(1, n_valid_bins - 2)
+    var_coeffs = mse * inv(XtWX)
+    A_sigma = sqrt(max(0.0, var_coeffs[1, 1]))
+    B_sigma = sqrt(max(0.0, var_coeffs[2, 2]))
+
+    # Extract parameters (A and B are already per-axis in nm²)
+    sigma_motion_sq_nm2 = max(0.0, A)  # nm²
     k_sq = max(0.0, B)
     k_scale = sqrt(k_sq)
     if config.clamp_k_to_one
         k_scale = max(k_scale, 1.0)
     end
-    sigma_motion_nm = sqrt(sigma_motion_sq) * 1000  # μm to nm
+    sigma_motion_nm = sqrt(sigma_motion_sq_nm2)
 
     return CalibrationResult(
         sigma_motion_nm, k_scale,
@@ -243,7 +259,7 @@ function apply_calibration(smld::BasicSMLD{T,E},
                            result::CalibrationResult) where {T, E<:SMLMData.AbstractEmitter}
     !result.calibration_applied && return smld
 
-    sigma_motion_sq = (result.sigma_motion_nm / 1000)^2  # nm² to μm²
+    sigma_motion_sq = (result.sigma_motion_nm / 1000)^2  # nm to μm, then squared
     k_sq = result.k_scale^2
 
     emitters = smld.emitters
