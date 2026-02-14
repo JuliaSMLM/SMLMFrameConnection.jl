@@ -14,7 +14,7 @@ uncertainties before track combination: `Σ_corrected = σ_motion² I + k² Σ_C
 - `filter_high_chi2::Bool=false`: Filter tracks with high chi² pairs before fitting
 - `chi2_filter_threshold::Float64=6.0`: Chi² threshold for track filtering (per pair)
 """
-Base.@kwdef struct CalibrationConfig
+Base.@kwdef struct CalibrationConfig <: SMLMData.AbstractSMLMConfig
     clamp_k_to_one::Bool = true
     filter_high_chi2::Bool = false
     chi2_filter_threshold::Float64 = 6.0
