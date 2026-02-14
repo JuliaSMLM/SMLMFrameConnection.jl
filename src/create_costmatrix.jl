@@ -1,6 +1,7 @@
 """
-    costmatrix = create_costmatrix(clusterdata::Vector{Matrix{Float32}}, 
-        params::ParamStruct, nframes::Int64)
+    costmatrix = create_costmatrix(clusterdata::Vector{Matrix{Float32}},
+        params::ParamStruct, clusterind::Int64, nframes::Int64,
+        base_rho_on::Vector{Float64})
 
 Create a cost matrix for connections between localizations in `clusterdata`.
 
@@ -10,23 +11,28 @@ input set of data in `clusterdata` are placed in entries of the output matrix
 `costmatrix`.  For N localizations in `clusterdata`, the output `costmatrix`
 will be an 2Nx2N block matrix.  The NxN blocks are attributed the following
 meanings: the upper-left "connection" block corresponds to adding localizations
-to existing clusters of other localizations, the bottom-left "birth" block 
+to existing clusters of other localizations, the bottom-left "birth" block
 corresponds to introduction of a new cluster, and the upper-right "death" block
 corresponds to preventing admission of any more localizations to a cluster.
 The bottom-right "auxillary" block is the transpose of the "connection" block.
 Forbidden connections are indicated by `missing`.
+
+`base_rho_on` is a precomputed unit-density on-state density curve of length
+`nframes`, shared across all clusters to avoid per-cluster allocation.
 """
-function create_costmatrix(clusterdata::Vector{Matrix{Float32}}, 
-    params::ParamStruct, clusterind::Int64, nframes::Int64)
+function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
+    params::ParamStruct, clusterind::Int64, nframes::Int64,
+    base_rho_on::Vector{Float64})
     # Extract some entries from clusterdata and params to make the code more
     # readable.
     # Column layout: 1:x 2:y 3:σ_x 4:σ_y 5:σ_xy 6:frame 7:dataset 8:connectID 9:sortindex
-    x = clusterdata[clusterind][:, 1]
-    y = clusterdata[clusterind][:, 2]
-    x_se = clusterdata[clusterind][:, 3]
-    y_se = clusterdata[clusterind][:, 4]
-    xy_cov = clusterdata[clusterind][:, 5]
-    framenum = clusterdata[clusterind][:, 6]
+    cluster = clusterdata[clusterind]
+    x = @view cluster[:, 1]
+    y = @view cluster[:, 2]
+    x_se = @view cluster[:, 3]
+    y_se = @view cluster[:, 4]
+    xy_cov = @view cluster[:, 5]
+    framenum = @view cluster[:, 6]
     k_on = params.k_on
     k_off = params.k_off
     k_bleach = params.k_bleach
@@ -36,24 +42,12 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
 
     # Populate the upper-left "connection" block.
     nlocalizations = length(framenum)
-    costmatrix = fill(Inf32, (2*nlocalizations, 2*nlocalizations))
-    validcost = fill(false, (2*nlocalizations, 2*nlocalizations))
+    n2 = 2 * nlocalizations
+    costmatrix = fill(Inf32, (n2, n2))
+    validcost = fill(false, (n2, n2))
     for mm = 1:nlocalizations, nn = (mm+1):nlocalizations
-        # For each localization, define the cost of linking to the other
-        # localizations (divided by two, since a selection of one of these
-        # costs leads to the same selection in the auxillary block).  In this
-        # case, it's the negative log-likelihood, where the likelihood is given
-        # as p(observed separation | localization error) ...
-        #  * p(missing last N frames localizations)p(not missing new loc.)...
-        #       *p(not turning off or bleaching)
-        # Costs are divided by two and split among the "connection" and
-        # "auxillary" blocks.
         deltaframe = abs(framenum[mm] - framenum[nn])
         if deltaframe == 0
-            # Localizations in the same frame should never be connected.
-            # NOTE: preclustering allows localizations in the same frame to be
-            #       part of the same cluster, which is why this block is
-            #       needed.
             continue
         end
         # Combined covariance matrix for two localizations:
@@ -78,33 +72,29 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
     end
 
     # Populate the lower-left "birth" block and the upper-right "death" block.
+    # Use precomputed base_rho_on, scaled by per-cluster density rho_0.
     startframe = 1
-    dutycycle = k_on / (k_on+k_off+k_bleach)
-    frames = collect(1:maximum(framenum))
-    lambda1 = k_bleach * dutycycle
-    lambda2 = (k_on+k_off+k_bleach) - lambda1
-    rho_on = rho_0 .* dutycycle .* 
-        (exp.(-lambda1*(frames.-1)) - exp.(-lambda2*(frames.-1)));
-    rho_off = rho_on .* k_off / k_on
-    indices = 1:nlocalizations
-    framesint = Int32.(framenum)
-    for nn in indices
-        deltaframe_past = minimum([max_frame_gap; framesint[nn]-startframe])
-        deltaframe_future = minimum([max_frame_gap; nframes-framesint[nn]])
+    birth_range = (nlocalizations+1):n2
+    for nn in 1:nlocalizations
+        frm = Int32(framenum[nn])
+        deltaframe_past = min(max_frame_gap, frm - startframe)
+        deltaframe_future = min(max_frame_gap, nframes - frm)
         # Localization uncertainty ellipse area (μm²) to make density dimensionless
         # Area = π√det(Σ) where det(Σ) = σ_x²σ_y² - σ_xy²
         det_loc = x_se[nn]^2 * y_se[nn]^2 - xy_cov[nn]^2
         loc_area = pi * sqrt(max(det_loc, eps()))
+        rho_off_f = rho_0 * base_rho_on[frm] * k_off / k_on
+        rho_on_past = rho_0 * base_rho_on[frm - deltaframe_past]
         birthcost = -log(1-p_miss) -
-            log(rho_off[framesint[nn]] * loc_area * (1-exp(-k_on)) * exp(-deltaframe_past*k_on) +
-                rho_on[framesint[nn]-deltaframe_past] * loc_area * (p_miss^deltaframe_past))
+            log(rho_off_f * loc_area * (1-exp(-k_on)) * exp(-deltaframe_past*k_on) +
+                rho_on_past * loc_area * (p_miss^deltaframe_past))
         deathcost = -log((1-exp(-k_off)) +
             (1-exp(-k_bleach)) +
             (p_miss^deltaframe_future))
-        costmatrix[indices .+ nlocalizations, nn] .= birthcost
-        costmatrix[nn, indices .+ nlocalizations] .= deathcost
-        validcost[indices .+ nlocalizations, nn] .= true
-        validcost[nn, indices .+ nlocalizations] .= true
+        costmatrix[birth_range, nn] .= birthcost
+        costmatrix[nn, birth_range] .= deathcost
+        validcost[birth_range, nn] .= true
+        validcost[nn, birth_range] .= true
     end
 
     # If any of the valid assignments (```validcost```) are inf, we should

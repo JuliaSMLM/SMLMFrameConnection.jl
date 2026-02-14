@@ -16,12 +16,26 @@ between localizations.
 function connectlocalizations!(connectID::Vector{Int64},
     clusterdata::Vector{Matrix{Float32}}, params::ParamStruct, nframes::Int64)
 
+    # Precompute unit-density rho_on curve (shared across all clusters).
+    # Each cluster scales by its own rho_0.
+    k_on = params.k_on
+    k_off = params.k_off
+    k_bleach = params.k_bleach
+    dutycycle = k_on / (k_on + k_off + k_bleach)
+    lambda1 = k_bleach * dutycycle
+    lambda2 = (k_on + k_off + k_bleach) - lambda1
+    base_rho_on = Vector{Float64}(undef, nframes)
+    @inbounds for f in 1:nframes
+        fm1 = Float64(f - 1)
+        base_rho_on[f] = dutycycle * (exp(-lambda1 * fm1) - exp(-lambda2 * fm1))
+    end
+
     # Loop through the clusters and solve the LAP.
     maxconnectID = maximum(connectID)
     idstocheck = findall(size.(clusterdata, 1) .> 1)
     for nn in idstocheck
         # Construct the cost matrix.
-        costmatrix = create_costmatrix(clusterdata, params, nn, nframes)
+        costmatrix = create_costmatrix(clusterdata, params, nn, nframes, base_rho_on)
 
         # Solve the LAP.
         assignment = solveLAP(costmatrix)
