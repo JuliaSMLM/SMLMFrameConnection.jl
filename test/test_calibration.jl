@@ -81,6 +81,42 @@ end
         @test haskey(result.frame_shifts, 1)
     end
 
+    @testset "analyze_calibration with uniform brightness (ratio estimator)" begin
+        # All emitters have same σ -- narrow CRLB range triggers ratio estimator
+        # With no motion and k=1, expect k_scale≈1, sigma_motion≈0
+        emitters = Emitter2DFit{Float64}[]
+        σ = 0.015
+        n_tracks = 200
+        seed = 9000
+
+        for t in 1:n_tracks
+            seed += 1
+            x = 5.0 + _hashval(seed, 1) * 40.0
+            y = 5.0 + _hashval(seed, 2) * 40.0
+            for f in 1:4
+                seed += 1
+                # Jitter consistent with σ (no extra motion)
+                dx = _hashnorm(seed, 1) * σ
+                dy = _hashnorm(seed, 2) * σ
+                push!(emitters, Emitter2DFit{Float64}(
+                    x + dx, y + dy,
+                    1000.0, 10.0, σ, σ, 0.0, 31.6, 3.16,
+                    f, 1, t, 0
+                ))
+            end
+        end
+
+        smld = make_test_smld(emitters; n_frames=4)
+        config = CalibrationConfig(clamp_k_to_one=false)
+        result = SMLMFrameConnection.analyze_calibration(smld, config)
+
+        @test result.calibration_applied == true
+        @test result.k_scale > 0.5
+        @test result.k_scale < 2.0
+        @test result.sigma_motion_nm == 0.0  # ratio estimator sets A=0
+        @test result.A == 0.0
+    end
+
     @testset "analyze_calibration fallback on insufficient data" begin
         emitters = [
             make_emitter(5.0, 5.0, 1; track_id=1),

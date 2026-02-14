@@ -132,68 +132,85 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     obs_var = dx_vec .^ 2 .+ dy_vec .^ 2  # total squared displacement
     crlb_var = var_x_vec .+ var_y_vec       # total CRLB variance for pair
 
-    # Bin data for WLS fit
-    n_bins = min(20, max(5, n_pairs ÷ 50))
-    sorted_idx = sortperm(crlb_var)
-    bin_size = n_pairs ÷ n_bins
+    # Check CRLB dynamic range -- if too narrow, WLS can't decompose A vs B
+    crlb_cv = std(crlb_var) / mean(crlb_var)
 
-    bin_centers = Float64[]
-    bin_observed = Float64[]
-    bin_weights = Float64[]
+    if crlb_cv < 0.1
+        # Narrow CRLB range: use ratio-of-means estimator (assumes A≈0)
+        # k² = mean(obs) / mean(crlb), sigma_motion = 0 by construction
+        mean_obs = mean(obs_var)
+        mean_crlb = mean(crlb_var)
+        B = mean_obs / mean_crlb
+        A = 0.0
+        A_sigma = 0.0
+        B_sigma = 0.0
+        r_squared = NaN  # not meaningful for ratio estimator
+        bin_centers = Float64[]
+        bin_observed = Float64[]
+    else
+        # Bin data for WLS fit
+        n_bins = min(20, max(5, n_pairs ÷ 50))
+        sorted_idx = sortperm(crlb_var)
+        bin_size = n_pairs ÷ n_bins
 
-    for b in 1:n_bins
-        i_start = (b - 1) * bin_size + 1
-        i_end = b == n_bins ? n_pairs : b * bin_size
-        bin_idx = sorted_idx[i_start:i_end]
-        n_bin = length(bin_idx)
-        n_bin == 0 && continue
+        bin_centers = Float64[]
+        bin_observed = Float64[]
+        bin_weights = Float64[]
 
-        bc = mean(crlb_var[bin_idx])
-        bo = mean(obs_var[bin_idx])
-        bv = var(obs_var[bin_idx])
-        w = bv > 0 ? n_bin / bv : 0.0
+        for b in 1:n_bins
+            i_start = (b - 1) * bin_size + 1
+            i_end = b == n_bins ? n_pairs : b * bin_size
+            bin_idx = sorted_idx[i_start:i_end]
+            n_bin = length(bin_idx)
+            n_bin == 0 && continue
 
-        push!(bin_centers, bc)
-        push!(bin_observed, bo)
-        push!(bin_weights, w)
-    end
+            bc = mean(crlb_var[bin_idx])
+            bo = mean(obs_var[bin_idx])
+            bv = var(obs_var[bin_idx])
+            w = bv > 0 ? n_bin / bv : 0.0
 
-    # WLS fit: obs = A + B * crlb (A=2*σ_motion², B=k² for combined x+y)
-    # Using normal equations: [A; B] = (X'WX)⁻¹ X'Wy
-    n_b = length(bin_centers)
-    X = hcat(ones(n_b), bin_centers)
-    W = Diagonal(bin_weights)
-    XtWX = X' * W * X
-    XtWy = X' * W * bin_observed
+            push!(bin_centers, bc)
+            push!(bin_observed, bo)
+            push!(bin_weights, w)
+        end
 
-    det_XtWX = XtWX[1,1] * XtWX[2,2] - XtWX[1,2]^2
-    if abs(det_XtWX) < eps()
-        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                "Singular WLS matrix";
-                                n_tracks_filtered=n_tracks_filtered)
-    end
+        # WLS fit: obs = A + B * crlb (A=2*σ_motion², B=k² for combined x+y)
+        # Using normal equations: [A; B] = (X'WX)⁻¹ X'Wy
+        n_b = length(bin_centers)
+        X = hcat(ones(n_b), bin_centers)
+        W = Diagonal(bin_weights)
+        XtWX = X' * W * X
+        XtWy = X' * W * bin_observed
 
-    # Solve
-    inv_XtWX = [XtWX[2,2] -XtWX[1,2]; -XtWX[1,2] XtWX[1,1]] / det_XtWX
-    coeffs = inv_XtWX * XtWy
-    A = coeffs[1]  # 2 * σ_motion² (x+y combined)
-    B = coeffs[2]  # k²
+        det_XtWX = XtWX[1,1] * XtWX[2,2] - XtWX[1,2]^2
+        if abs(det_XtWX) < eps()
+            return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
+                                    "Singular WLS matrix";
+                                    n_tracks_filtered=n_tracks_filtered)
+        end
 
-    # Standard errors
-    A_sigma = sqrt(max(0.0, inv_XtWX[1,1]))
-    B_sigma = sqrt(max(0.0, inv_XtWX[2,2]))
+        # Solve
+        inv_XtWX = [XtWX[2,2] -XtWX[1,2]; -XtWX[1,2] XtWX[1,1]] / det_XtWX
+        coeffs = inv_XtWX * XtWy
+        A = coeffs[1]  # 2 * σ_motion² (x+y combined)
+        B = coeffs[2]  # k²
 
-    # R²
-    y_pred = X * coeffs
-    ss_res = sum(bin_weights .* (bin_observed .- y_pred) .^ 2)
-    y_mean = sum(bin_weights .* bin_observed) / sum(bin_weights)
-    ss_tot = sum(bin_weights .* (bin_observed .- y_mean) .^ 2)
-    r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : 0.0
+        # Standard errors
+        A_sigma = sqrt(max(0.0, inv_XtWX[1,1]))
+        B_sigma = sqrt(max(0.0, inv_XtWX[2,2]))
 
-    if B <= 0
-        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                "Non-positive slope B=$(round(B, digits=6)) (k² must be > 0)";
-                                n_tracks_filtered=n_tracks_filtered)
+        # R²
+        y_pred = X * coeffs
+        ss_res = sum(bin_weights .* (bin_observed .- y_pred) .^ 2)
+        y_mean = sum(bin_weights .* bin_observed) / sum(bin_weights)
+        ss_tot = sum(bin_weights .* (bin_observed .- y_mean) .^ 2)
+        r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : 0.0
+
+        if B <= 0
+            return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
+                                    "Non-positive slope B=$(round(B, digits=6)) (k² must be > 0)";
+                                    n_tracks_filtered=n_tracks_filtered)
+        end
     end
 
     # Extract per-axis parameters: A/2 = σ_motion² per axis, B = k² per axis
