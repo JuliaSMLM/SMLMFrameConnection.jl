@@ -224,6 +224,12 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     ss_tot = sum(weights .* (bin_observed .- mean(bin_observed)) .^ 2)
     r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : NaN
 
+    if r_squared < 0.1
+        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
+                                "Poor fit quality (R² = $(round(r_squared, digits=3)))";
+                                n_tracks_filtered=n_tracks_filtered)
+    end
+
     mse = ss_res / max(1, n_valid_bins - 2)
     var_coeffs = mse * inv(XtWX)
     A_sigma = sqrt(max(0.0, var_coeffs[1, 1]))
