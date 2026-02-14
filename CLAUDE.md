@@ -37,7 +37,9 @@ Test files must `include("test/test_helpers.jl")` first since `runtests.jl` load
 
 3. **Connect via LAP** (`connectlocalizations.jl` -> `create_costmatrix.jl` -> `solveLAP.jl` -> `linkclusters.jl`): For each multi-emitter precluster, builds a 2Nx2N cost matrix with connection/birth/death blocks using negative log-likelihoods from spatial separation, observation probability, and photophysics. Solves with Hungarian.jl. `linkclusters.jl` updates `connectID` from LAP assignments.
 
-4. **Combine** (`combinelocalizations.jl`): MLE weighted mean using full 2x2 covariance (precision-weighted). Produces higher-precision output localizations.
+4. **Calibrate** (optional, `calibration.jl`): When `config.calibration` is set, analyzes frame-to-frame jitter within connected tracks to estimate motion variance (`σ_motion²`) and CRLB scale factor (`k²`). Applies corrected uncertainties `Σ_corrected = σ_motion² I + k² Σ_CRLB` before combination. Falls back gracefully (identity correction) if insufficient data or poor fit.
+
+5. **Combine** (`combinelocalizations.jl`): MLE weighted mean using full 2x2 covariance (precision-weighted). Produces higher-precision output localizations.
 
 ### Data Flow
 
@@ -50,6 +52,8 @@ Test files must `include("test/test_helpers.jl")` first since `runtests.jl` load
 
 - `FrameConnectConfig <: AbstractSMLMConfig`: User-facing config (keyword-constructible)
 - `FrameConnectInfo{T} <: AbstractSMLMInfo`: Algorithm output metadata (track assignments, rates, timing)
+- `CalibrationConfig`: Optional uncertainty calibration settings (nested in `FrameConnectConfig.calibration`)
+- `CalibrationResult`: Calibration diagnostics (nested in `FrameConnectInfo.calibration`, `nothing` when disabled)
 - `ParamStruct`: Internal mutable state for pipeline parameters (not exported for direct use)
 
 ### Dual API Pattern
