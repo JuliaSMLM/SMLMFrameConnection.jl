@@ -229,20 +229,26 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     A_sigma = sqrt(max(0.0, var_coeffs[1, 1]))
     B_sigma = sqrt(max(0.0, var_coeffs[2, 2]))
 
-    # Extract parameters (A and B are already per-axis in nm²)
-    sigma_motion_sq_nm2 = max(0.0, A)  # nm²
+    # Extract parameters -- fit was in nm², convert to μm² for storage
+    # A is σ_motion² (nm²), B is k² (dimensionless)
+    sigma_motion_nm = sqrt(max(0.0, A))
     k_sq = max(0.0, B)
     k_scale = sqrt(k_sq)
     if config.clamp_k_to_one
         k_scale = max(k_scale, 1.0)
     end
-    sigma_motion_nm = sqrt(sigma_motion_sq_nm2)
+
+    # Convert A, A_sigma, bin data from nm² to μm² for CalibrationResult
+    A_um2 = A * 1e-6
+    A_sigma_um2 = A_sigma * 1e-6
+    bin_centers_um2 = bin_centers .* 1e-6
+    bin_observed_um2 = bin_observed .* 1e-6
 
     return CalibrationResult(
         sigma_motion_nm, k_scale,
-        A, B, A_sigma, B_sigma, r_squared, mean_chi2,
+        A_um2, B, A_sigma_um2, B_sigma, r_squared, mean_chi2,
         n_pairs, n_tracks_used, n_tracks_filtered,
-        bin_centers, bin_observed, frame_shifts,
+        bin_centers_um2, bin_observed_um2, frame_shifts,
         true, ""
     )
 end
