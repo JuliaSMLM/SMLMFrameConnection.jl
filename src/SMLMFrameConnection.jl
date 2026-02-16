@@ -10,7 +10,7 @@ using Statistics
 using LinearAlgebra
 
 export frameconnect, defineidealFC, combinelocalizations
-export FrameConnectConfig, FrameConnectInfo, ParamStruct
+export FrameConnectConfig, FrameConnectInfo
 export CalibrationConfig, CalibrationResult
 
 include("structdefinitions.jl")

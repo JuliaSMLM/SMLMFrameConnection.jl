@@ -29,8 +29,8 @@
 
     @testset "ParamStruct" begin
         @testset "default constructor" begin
-            params = ParamStruct()
-            @test params isa ParamStruct
+            params = SMLMFrameConnection.ParamStruct()
+            @test params isa SMLMFrameConnection.ParamStruct
             @test params.initial_density == []
             @test params.n_density_neighbors == 2
             @test params.k_on == 0.0
@@ -43,7 +43,7 @@
         end
 
         @testset "field mutation" begin
-            params = ParamStruct()
+            params = SMLMFrameConnection.ParamStruct()
 
             # Should be mutable
             params.k_on = 0.1
@@ -57,7 +57,7 @@
         end
 
         @testset "full constructor" begin
-            params = ParamStruct([1.0], 3, 0.1, 0.5, 0.01, 0.05, 4.0, 10, 3)
+            params = SMLMFrameConnection.ParamStruct([1.0], 3, 0.1, 0.5, 0.01, 0.05, 4.0, 10, 3)
             @test params.initial_density == [1.0]
             @test params.n_density_neighbors == 3
             @test params.k_on == 0.1
