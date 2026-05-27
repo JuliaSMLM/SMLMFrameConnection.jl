@@ -61,12 +61,14 @@ frameconnect(smld;
     n_density_neighbors = 2,   # Clusters for density estimation
     max_sigma_dist = 5.0,        # Distance threshold multiplier
     max_frame_gap = 5,        # Max frame gap for connections
-    max_neighbors = 2              # Nearest neighbors for preclustering
+    max_neighbors = 2,              # Nearest neighbors for preclustering
+    track_length = nothing      # Inclusive (min,max) locs-per-track filter; nothing disables
 )
 ```
 
 - `max_sigma_dist`: Higher values allow connections over larger distances
 - `max_frame_gap`: Increase for dyes with long dark states (dSTORM: 10-20)
+- `track_length`: `(2.0, Inf)` drops single-frame blinks; `(2.0, 50.0)` also drops over-long tracks (fiducials, sticky strands). Count dropped is reported in `info.n_filtered`
 
 ## API Reference
 

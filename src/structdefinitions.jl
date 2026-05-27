@@ -80,6 +80,14 @@ Configuration parameters for frame connection algorithm.
                         in a precluster (see `precluster`)
 - `max_neighbors::Int=2`: Maximum number of nearest-neighbors inspected for precluster
                    membership (see `precluster`)
+- `track_length::Union{Tuple{Float64,Float64}, Nothing}=nothing`: Inclusive `(min, max)`
+                   range on the number of localizations a track must contain to be emitted
+                   as a combined localization (`lo <= nperID <= hi`). Counts localizations
+                   sharing a `track_id`, not temporal frame-span. `nothing` (default) disables
+                   filtering. Use `(2.0, Inf)` to drop single-frame blinks, or `(2.0, 50.0)`
+                   to also drop over-long tracks (e.g. fiducials, sticky docking strands in
+                   dense DNA-PAINT). Mirrors the `(min, max)` filter idiom used elsewhere in
+                   the ecosystem. See `combinelocalizations`.
 - `calibration::Union{CalibrationConfig, Nothing}=nothing`: Optional uncertainty calibration
 
 # Example
@@ -103,6 +111,7 @@ Base.@kwdef struct FrameConnectConfig <: AbstractSMLMConfig
     max_sigma_dist::Float64 = 5.0
     max_frame_gap::Int = 5
     max_neighbors::Int = 2
+    track_length::Union{Tuple{Float64,Float64}, Nothing} = nothing
     calibration::Union{CalibrationConfig, Nothing} = nothing
 end
 

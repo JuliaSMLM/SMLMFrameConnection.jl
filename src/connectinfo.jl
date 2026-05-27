@@ -8,8 +8,12 @@ Secondary output from `frameconnect()` containing track assignments and algorith
 # Fields
 - `connected::BasicSMLD{T}`: Input SMLD with track_id assigned (localizations uncombined)
 - `n_input::Int`: Number of input localizations
-- `n_tracks::Int`: Number of tracks formed
-- `n_combined::Int`: Number of output localizations
+- `n_tracks::Int`: Number of tracks formed (connection-stage count, pre length-filter)
+- `n_combined::Int`: Number of output localizations (post length-filter)
+- `n_filtered::Int`: Number of tracks dropped for falling outside the `track_length`
+                     range. When `track_length === nothing` (default) this is `0`. Note
+                     `n_tracks - n_combined == n_filtered` while the length filter
+                     is the only cause of dropped tracks.
 - `k_on::Float64`: Estimated on rate (1/frame)
 - `k_off::Float64`: Estimated off rate (1/frame)
 - `k_bleach::Float64`: Estimated bleach rate (1/frame)
@@ -47,6 +51,7 @@ struct FrameConnectInfo{T} <: AbstractSMLMInfo
     n_input::Int
     n_tracks::Int
     n_combined::Int
+    n_filtered::Int
     k_on::Float64
     k_off::Float64
     k_bleach::Float64
