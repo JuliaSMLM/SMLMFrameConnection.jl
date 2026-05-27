@@ -38,6 +38,7 @@ For complete SMLM workflows (detection + fitting + frame-connection + rendering)
 | `max_sigma_dist` | 5.0 | Sigma multiplier for preclustering distance threshold |
 | `max_frame_gap` | 5 | Maximum frame gap for temporal adjacency |
 | `max_neighbors` | 2 | Maximum nearest-neighbors for precluster membership |
+| `track_length` | `nothing` | Inclusive `(min, max)` range on localizations per track; tracks outside it are dropped (`nothing` disables). `info.n_filtered` reports the count dropped |
 
 ```julia
 # Keyword form (most common)
@@ -48,7 +49,7 @@ config = FrameConnectConfig(max_frame_gap=10, max_sigma_dist=3.0)
 (combined, info) = frameconnect(smld, config)
 ```
 
-**Parameter guidance:** Default values work well for standard dSTORM/PALM data. For dense samples, reduce `max_sigma_dist` to 3.0. For long dark states (dSTORM), increase `max_frame_gap` to 10-20.
+**Parameter guidance:** Default values work well for standard dSTORM/PALM data. For dense samples, reduce `max_sigma_dist` to 3.0. For long dark states (dSTORM), increase `max_frame_gap` to 10-20. To discard single-frame blinks set `track_length=(2.0, Inf)`; a finite upper bound like `(2.0, 50.0)` also removes over-long tracks such as fiducials or sticky docking strands in dense DNA-PAINT.
 
 ## Output Format
 

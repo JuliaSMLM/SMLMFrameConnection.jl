@@ -8,7 +8,7 @@
         smld = BasicSMLD(emitters, camera, 1, 1, Dict{String,Any}())
 
         info = FrameConnectInfo{Float64}(
-            smld, 10, 5, 5, 0.1, 0.5, 0.01, 0.05, [1.0, 2.0], 1.5, :lap, 3, nothing
+            smld, 10, 5, 5, 0, 0.1, 0.5, 0.01, 0.05, [1.0, 2.0], 1.5, :lap, 3, nothing
         )
 
         @test info isa FrameConnectInfo{Float64}
@@ -16,6 +16,7 @@
         @test info.n_input == 10
         @test info.n_tracks == 5
         @test info.n_combined == 5
+        @test info.n_filtered == 0
         @test info.k_on == 0.1
         @test info.k_off == 0.5
         @test info.k_bleach == 0.01

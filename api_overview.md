@@ -39,6 +39,8 @@ For simulated data where `track_id` indicates ground-truth emitter ID. Useful fo
     max_sigma_dist::Float64 = 5.0    # Sigma multiplier for preclustering distance threshold
     max_frame_gap::Int = 5        # Maximum frame gap for temporal adjacency
     max_neighbors::Int = 2             # Maximum nearest-neighbors for precluster membership
+    track_length::Union{Tuple{Float64,Float64}, Nothing} = nothing  # Inclusive (min,max) locs-per-track filter; nothing disables
+    calibration::Union{CalibrationConfig, Nothing} = nothing  # Optional uncertainty calibration
 end
 ```
 Configuration parameters for frame connection. Use with `frameconnect(smld, config)` or pass fields as kwargs to `frameconnect(smld; kwargs...)`.
@@ -58,8 +60,9 @@ config = FrameConnectConfig(max_frame_gap=10, max_sigma_dist=3.0)
 struct FrameConnectInfo{T} <: AbstractSMLMInfo
     connected::BasicSMLD{T}       # Input with track_id assigned (uncombined)
     n_input::Int                  # Number of input localizations
-    n_tracks::Int                 # Number of tracks formed
-    n_combined::Int               # Number of output localizations
+    n_tracks::Int                 # Number of tracks formed (pre length-filter)
+    n_combined::Int               # Number of output localizations (post length-filter)
+    n_filtered::Int               # Tracks dropped outside track_length range (0 if disabled)
     k_on::Float64                 # Rate: dark → visible (1/frame)
     k_off::Float64                # Rate: visible → dark (1/frame)
     k_bleach::Float64             # Rate: photobleaching (1/frame)
@@ -68,6 +71,7 @@ struct FrameConnectInfo{T} <: AbstractSMLMInfo
     elapsed_s::Float64            # Wall time in seconds
     algorithm::Symbol             # Algorithm used (:lap)
     n_preclusters::Int            # Number of preclusters formed
+    calibration::Union{CalibrationResult, Nothing}  # Calibration diagnostics (nothing if disabled)
 end
 ```
 

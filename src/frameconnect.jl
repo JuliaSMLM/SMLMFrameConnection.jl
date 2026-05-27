@@ -28,6 +28,11 @@ using their MLE position estimate assuming Gaussian noise.
                         in a precluster (see `precluster`)
 - `max_neighbors::Int=2`: Maximum number of nearest-neighbors inspected for precluster
                    membership (see `precluster`)
+- `track_length::Union{Tuple{Float64,Float64},Nothing}=nothing`: Inclusive `(min, max)`
+                   range on localizations per track; tracks outside it are dropped. `nothing`
+                   is a no-op. `(2.0, Inf)` removes single-frame blinks; `(2.0, 50.0)` also
+                   drops over-long tracks (fiducials, sticky strands). The number dropped is
+                   reported as `info.n_filtered` (see [`combinelocalizations`](@ref)).
 
 # Returns
 A tuple `(combined, info)`:
@@ -115,17 +120,29 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
     end
 
     # Combine the connected localizations into higher precision localizations.
-    smld_combined = combinelocalizations(smld_to_combine)
+    smld_combined = combinelocalizations(smld_to_combine;
+        track_length=config.track_length)
 
     elapsed_s = time() - t_start
 
     # Build FrameConnectInfo
     n_tracks = length(unique(connectID_final))
+
+    # Tracks dropped specifically by the length filter (cause-attributed count,
+    # not n_tracks - n_combined, so it stays correct if combine ever drops
+    # clusters for other reasons). connectID_final is compressed to 1:n_tracks.
+    n_filtered = if config.track_length === nothing
+        0
+    else
+        lo, hi = config.track_length
+        count(n -> !(lo <= n <= hi), counts(connectID_final))
+    end
     info = FrameConnectInfo{T}(
         smld_connected,
         length(smld.emitters),
         n_tracks,
         length(smld_combined.emitters),
+        n_filtered,
         params.k_on,
         params.k_off,
         params.k_bleach,

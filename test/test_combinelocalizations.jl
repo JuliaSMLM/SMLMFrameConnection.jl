@@ -170,4 +170,62 @@
         @test result.n_frames == smld.n_frames
         @test result.n_datasets == smld.n_datasets
     end
+
+    @testset "track_length range filtering" begin
+        # make_prelabeled_smld: track 1 (2 locs), track 2 (3 locs), track 3 (1 loc)
+        smld = make_prelabeled_smld()
+
+        # Default (nothing) is a no-op
+        @test length(combinelocalizations(smld).emitters) == 3
+        @test length(combinelocalizations(smld; track_length=nothing).emitters) == 3
+
+        # (2, Inf) drops the single-localization track (track 3)
+        r2 = combinelocalizations(smld; track_length=(2.0, Inf))
+        @test length(r2.emitters) == 2
+        @test Set(e.track_id for e in r2.emitters) == Set([1, 2])
+
+        # (3, Inf) keeps only the 3-localization track (track 2)
+        r3 = combinelocalizations(smld; track_length=(3.0, Inf))
+        @test length(r3.emitters) == 1
+        @test r3.emitters[1].track_id == 2
+
+        # (4, Inf) drops everything
+        @test isempty(combinelocalizations(smld; track_length=(4.0, Inf)).emitters)
+
+        # Upper bound: (1, 2) keeps tracks 1 (2 locs) and 3 (1 loc), drops track 2 (3 locs)
+        rhi = combinelocalizations(smld; track_length=(1.0, 2.0))
+        @test Set(e.track_id for e in rhi.emitters) == Set([1, 3])
+
+        # Two-sided window: (2, 2) keeps only the 2-localization track (track 1)
+        rwin = combinelocalizations(smld; track_length=(2.0, 2.0))
+        @test length(rwin.emitters) == 1
+        @test rwin.emitters[1].track_id == 1
+    end
+
+    @testset "offset-safety dropping a middle cluster" begin
+        # Drop a cluster that is neither first nor last: the surviving clusters'
+        # values must stay correct, which exercises that ncumulative offsets
+        # still span every localization in the sorted arrays.
+        σ = 0.02
+        emitters = [
+            make_emitter(5.0, 5.0, 1; σ_pos=σ, track_id=1, photons=1000.0),
+            make_emitter(5.0, 5.0, 2; σ_pos=σ, track_id=1, photons=1000.0),
+            make_emitter(10.0, 10.0, 1; σ_pos=σ, track_id=2, photons=777.0),  # dropped
+            make_emitter(15.0, 15.0, 3; σ_pos=σ, track_id=3, photons=1000.0),
+            make_emitter(15.0, 15.0, 4; σ_pos=σ, track_id=3, photons=1000.0),
+        ]
+        smld = make_test_smld(emitters; n_frames=4)
+        result = combinelocalizations(smld; track_length=(2.0, Inf))
+
+        @test length(result.emitters) == 2
+        sorted = sort(result.emitters, by=e->e.track_id)
+        # Track 1 survives at x=5 with summed photons; track 2 (x=10) is gone
+        @test sorted[1].track_id == 1
+        @test sorted[1].x ≈ 5.0 atol=1e-10
+        @test sorted[1].photons ≈ 2000.0 atol=1e-10
+        # Track 3 survives at x=15 — would be corrupted if offsets shifted
+        @test sorted[2].track_id == 3
+        @test sorted[2].x ≈ 15.0 atol=1e-10
+        @test sorted[2].photons ≈ 2000.0 atol=1e-10
+    end
 end

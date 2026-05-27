@@ -2,7 +2,8 @@ using SMLMData
 using StatsBase
 
 """
-    smld_combined = combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.AbstractEmitter}
+    smld_combined = combinelocalizations(smld::BasicSMLD{T,E};
+        track_length::Union{Tuple{Float64,Float64},Nothing}=nothing) where {T, E<:SMLMData.AbstractEmitter}
 
 Combine clustered localizations in `smld` into higher precision localizations.
 
@@ -10,8 +11,16 @@ Combine clustered localizations in `smld` into higher precision localizations.
 This function combines localizations in `smld` that share the same value of
 track_id.  Localizations are combined assuming they arose from
 independent measurements of the same position with Gaussian errors.
+
+`track_length` is an inclusive `(min, max)` range on the number of localizations
+per track: a track is emitted only if `min <= nperID <= max`. `nothing` (the
+default) disables filtering. This counts localizations sharing a `track_id`, not
+temporal frame-span. Use `(2.0, Inf)` to drop single-frame blinks, or a finite
+upper bound like `(2.0, 50.0)` to also drop over-long tracks (e.g. fiducials or
+sticky docking strands in dense DNA-PAINT data).
 """
-function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.AbstractEmitter}
+function combinelocalizations(smld::BasicSMLD{T,E};
+    track_length::Union{Tuple{Float64,Float64},Nothing}=nothing) where {T, E<:SMLMData.AbstractEmitter}
     # Extract arrays from emitters
     emitters = smld.emitters
     connectID = [e.track_id for e in emitters]
@@ -33,8 +42,17 @@ function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.Abstra
     # Loop over clusters and combine their localization data as appropriate.
     nperID = counts(connectID)
     nperID = nperID[nperID .!= 0]
+    # ncumulative is built over the FULL set of present clusters so its offsets
+    # span every localization in the sorted arrays. The length filter only
+    # selects which clusters to emit (`keep`); it must not alter these offsets.
     ncumulative = [0; cumsum(nperID)]
-    nclusters = length(nperID)
+    keep = if track_length === nothing
+        collect(1:length(nperID))
+    else
+        lo, hi = track_length
+        findall(n -> lo <= n <= hi, nperID)
+    end
+    nclusters = length(keep)
 
     # Pre-allocate arrays for combined values
     # Use emitter's native precision, not SMLD's type parameter
@@ -53,7 +71,7 @@ function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.Abstra
     datasetnum_combined = Vector{Int}(undef, nclusters)
     id_combined = Vector{Int}(undef, nclusters)
 
-    for nn in 1:nclusters
+    for (out_idx, nn) in enumerate(keep)
         indices = (1:nperID[nn]) .+ ncumulative[nn]
 
         # Combine positions using precision-weighted mean with full 2x2 covariance.
@@ -88,22 +106,22 @@ function combinelocalizations(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.Abstra
         Σ_comb_12 = -P_sum[1,2] / det_P  # σ_xy
 
         # Combined position (cast back to emitter precision)
-        x_combined[nn] = ET(Σ_comb_11 * μ_weighted[1] + Σ_comb_12 * μ_weighted[2])
-        y_combined[nn] = ET(Σ_comb_12 * μ_weighted[1] + Σ_comb_22 * μ_weighted[2])
-        σ_x_combined[nn] = ET(sqrt(Σ_comb_11))
-        σ_y_combined[nn] = ET(sqrt(Σ_comb_22))
-        σ_xy_combined[nn] = ET(Σ_comb_12)
+        x_combined[out_idx] = ET(Σ_comb_11 * μ_weighted[1] + Σ_comb_12 * μ_weighted[2])
+        y_combined[out_idx] = ET(Σ_comb_12 * μ_weighted[1] + Σ_comb_22 * μ_weighted[2])
+        σ_x_combined[out_idx] = ET(sqrt(Σ_comb_11))
+        σ_y_combined[out_idx] = ET(sqrt(Σ_comb_22))
+        σ_xy_combined[out_idx] = ET(Σ_comb_12)
 
         # Photons and background: sum (independent measurements)
-        photons_combined[nn] = sum(photons[indices])
-        σ_photons_combined[nn] = sqrt(sum(σ_photons[indices] .^ 2))
-        bg_combined[nn] = sum(bg[indices])
-        σ_bg_combined[nn] = sqrt(sum(σ_bg[indices] .^ 2))
+        photons_combined[out_idx] = sum(photons[indices])
+        σ_photons_combined[out_idx] = sqrt(sum(σ_photons[indices] .^ 2))
+        bg_combined[out_idx] = sum(bg[indices])
+        σ_bg_combined[out_idx] = sqrt(sum(σ_bg[indices] .^ 2))
 
-        connectID_combined[nn] = connectID[indices[1]]
-        framenum_combined[nn] = framenum[indices[1]]
-        datasetnum_combined[nn] = datasetnum[indices[1]]
-        id_combined[nn] = id[indices[1]]
+        connectID_combined[out_idx] = connectID[indices[1]]
+        framenum_combined[out_idx] = framenum[indices[1]]
+        datasetnum_combined[out_idx] = datasetnum[indices[1]]
+        id_combined[out_idx] = id[indices[1]]
     end
 
     # Create new emitters for combined results

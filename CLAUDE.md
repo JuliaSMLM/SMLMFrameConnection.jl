@@ -39,7 +39,7 @@ Test files must `include("test/test_helpers.jl")` first since `runtests.jl` load
 
 4. **Calibrate** (optional, `calibration.jl`): When `config.calibration` is set, analyzes frame-to-frame jitter within connected tracks to estimate motion variance (`σ_motion²`) and CRLB scale factor (`k²`). Applies corrected uncertainties `Σ_corrected = σ_motion² I + k² Σ_CRLB` before combination. Falls back gracefully (identity correction) if insufficient data or poor fit.
 
-5. **Combine** (`combinelocalizations.jl`): MLE weighted mean using full 2x2 covariance (precision-weighted). Produces higher-precision output localizations.
+5. **Combine** (`combinelocalizations.jl`): MLE weighted mean using full 2x2 covariance (precision-weighted). Produces higher-precision output localizations. The `track_length` config (inclusive `(min, max)` range, `nothing`=disabled) drops tracks whose localization count falls outside the range here (offset-safe: `ncumulative` spans all localizations, a `keep` mask selects which clusters to emit) — `info.connected` retains all tracks, so filtering only affects the combined output. `info.n_filtered` reports the count dropped.
 
 ### Data Flow
 
