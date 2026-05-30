@@ -43,6 +43,7 @@ The calibration model fits: `observed_var = A + B * CRLB_var` where
 - `n_tracks_filtered::Int`: Number of tracks removed by chi² filter
 - `bin_centers::Vector{Float64}`: Bin centers (CRLB variance) for diagnostic plots
 - `bin_observed::Vector{Float64}`: Bin observed variance for diagnostic plots
+- `bin_counts::Vector{Int}`: Number of pairs per bin (parallel to bin_centers/bin_observed); use to grey/drop low-statistics bins in diagnostic plots
 - `frame_shifts::Dict{Int, Vector{NTuple{2,Float64}}}`: Per-dataset (dx,dy) shifts for jitter plots
 - `calibration_applied::Bool`: Whether calibration was actually applied (false on fallback)
 - `warning::String`: Warning message if calibration fell back (empty if OK)
@@ -61,6 +62,7 @@ struct CalibrationResult
     n_tracks_filtered::Int
     bin_centers::Vector{Float64}
     bin_observed::Vector{Float64}
+    bin_counts::Vector{Int}
     frame_shifts::Dict{Int, Vector{NTuple{2,Float64}}}
     calibration_applied::Bool
     warning::String

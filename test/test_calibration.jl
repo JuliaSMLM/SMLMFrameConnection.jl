@@ -78,6 +78,8 @@ end
 
         @test length(result.bin_centers) > 0
         @test length(result.bin_observed) == length(result.bin_centers)
+        @test length(result.bin_counts) == length(result.bin_centers)
+        @test all(result.bin_counts .>= 5)
         @test haskey(result.frame_shifts, 1)
     end
 
@@ -145,7 +147,7 @@ end
             2e-4, 2.25, 0.0, 0.0,
             0.95, 2.0,
             2, 1, 0,
-            Float64[], Float64[],
+            Float64[], Float64[], Int[],
             Dict{Int, Vector{NTuple{2,Float64}}}(),
             true, ""
         )
@@ -179,7 +181,7 @@ end
             5e-5, 4.0, 0.0, 0.0,
             0.95, 2.0,
             100, 50, 0,
-            Float64[], Float64[],
+            Float64[], Float64[], Int[],
             Dict{Int, Vector{NTuple{2,Float64}}}(),
             true, ""
         )
@@ -197,7 +199,7 @@ end
         result = CalibrationResult(
             0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, NaN,
             0, 0, 0,
-            Float64[], Float64[],
+            Float64[], Float64[], Int[],
             Dict{Int, Vector{NTuple{2,Float64}}}(),
             false, "fallback"
         )
