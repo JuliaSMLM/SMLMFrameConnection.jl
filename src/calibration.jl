@@ -254,7 +254,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         sigma_motion_nm, k_scale,
         A_um2, B, A_sigma_um2, B_sigma, r_squared, mean_chi2,
         n_pairs, n_tracks_used, n_tracks_filtered,
-        bin_centers_um2, bin_observed_um2, frame_shifts,
+        bin_centers_um2, bin_observed_um2, copy(n_per_bin), frame_shifts,
         true, ""
     )
 end
@@ -304,7 +304,7 @@ function _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts, warni
         0.0, 1.0, 0.0, 0.0,    # A, B, A_sigma, B_sigma
         0.0, mean_chi2,         # r_squared, mean_chi2
         n_pairs, n_tracks_used, n_tracks_filtered,
-        Float64[], Float64[],   # bin_centers, bin_observed
+        Float64[], Float64[], Int[],   # bin_centers, bin_observed, bin_counts
         frame_shifts,
         false, warning
     )
