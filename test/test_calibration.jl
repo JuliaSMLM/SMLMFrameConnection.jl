@@ -13,11 +13,15 @@ end
         @test cc.clamp_k_to_one == true
         @test cc.filter_high_chi2 == false
         @test cc.chi2_filter_threshold == 6.0
+        @test cc.quantile_binning == false
 
         cc2 = CalibrationConfig(clamp_k_to_one=false, filter_high_chi2=true, chi2_filter_threshold=4.0)
         @test cc2.clamp_k_to_one == false
         @test cc2.filter_high_chi2 == true
         @test cc2.chi2_filter_threshold == 4.0
+
+        cc3 = CalibrationConfig(quantile_binning=true)
+        @test cc3.quantile_binning == true
     end
 
     @testset "CalibrationConfig in FrameConnectConfig" begin
@@ -81,6 +85,59 @@ end
         @test length(result.bin_counts) == length(result.bin_centers)
         @test all(result.bin_counts .>= 5)
         @test haskey(result.frame_shifts, 1)
+    end
+
+    @testset "quantile binning on heavy-tailed CRLB" begin
+        # Tight-CRLB bulk + thin high-CRLB tail: equal-width binning collapses to
+        # the ~3-bin minimum (bulk piles in bin 1, middle bins drop), while quantile
+        # binning spreads well-populated bins across the data density.
+        true_sigma_motion = 0.005  # 5 nm in μm
+        true_k = 1.5
+
+        emitters = Emitter2DFit{Float64}[]
+        track_id = 0
+        n_tracks = 400
+        frames_per_track = 5
+        seed = 1000
+
+        for t in 1:n_tracks
+            track_id += 1
+            seed += 1
+            base_x = 5.0 + _hashval(seed, 1) * 40.0
+            base_y = 5.0 + _hashval(seed, 2) * 40.0
+            # 95% tight bulk (~10-30 nm), 5% thin high-CRLB tail stretching x_max
+            crlb_sigma = _hashval(seed, 4) < 0.95 ?
+                0.010 + _hashval(seed, 3) * 0.005 :
+                0.10 + _hashval(seed, 3) * 0.12
+
+            for f in 1:frames_per_track
+                seed += 1
+                true_sigma = sqrt(true_sigma_motion^2 + true_k^2 * crlb_sigma^2)
+                x = base_x + _hashnorm(seed, 1) * true_sigma
+                y = base_y + _hashnorm(seed, 2) * true_sigma
+                push!(emitters, Emitter2DFit{Float64}(
+                    x, y, 1000.0, 10.0,
+                    crlb_sigma, crlb_sigma, 0.0,
+                    31.6, 3.16,
+                    f, 1, track_id, 0
+                ))
+            end
+        end
+
+        smld = make_test_smld(emitters; n_frames=frames_per_track)
+
+        result_ew = SMLMFrameConnection.analyze_calibration(
+            smld, CalibrationConfig(clamp_k_to_one=false, quantile_binning=false))
+        result_q = SMLMFrameConnection.analyze_calibration(
+            smld, CalibrationConfig(clamp_k_to_one=false, quantile_binning=true))
+
+        # Quantile binning yields many more well-populated bins than equal-width,
+        # which collapses toward the 3-bin minimum on this distribution.
+        @test length(result_q.bin_centers) > length(result_ew.bin_centers)
+        @test length(result_q.bin_centers) >= 15
+        @test all(result_q.bin_counts .>= 5)
+        @test length(result_q.bin_counts) == length(result_q.bin_centers)
+        @test result_q.calibration_applied == true
     end
 
     @testset "analyze_calibration with uniform brightness" begin

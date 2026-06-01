@@ -13,11 +13,17 @@ uncertainties before track combination: `Σ_corrected = σ_motion² I + k² Σ_C
 - `clamp_k_to_one::Bool=true`: Clamp k_scale to minimum of 1.0 (CRLB is a lower bound)
 - `filter_high_chi2::Bool=false`: Filter tracks with high chi² pairs before fitting
 - `chi2_filter_threshold::Float64=6.0`: Chi² threshold for track filtering (per pair)
+- `quantile_binning::Bool=false`: Use equal-count (quantile) bins instead of equal-width
+  bins for the observed-vs-CRLB fit. Equal-width binning collapses to the 3-bin minimum
+  on tight-CRLB data with a thin high-CRLB tail (the bulk piles into bin 1, middle bins
+  fall below the 5-point floor and drop), pinning the WLS slope on a few leveraged means.
+  Quantile binning spreads ~`n_bins` well-populated points across the actual data density.
 """
 Base.@kwdef struct CalibrationConfig <: SMLMData.AbstractSMLMConfig
     clamp_k_to_one::Bool = true
     filter_high_chi2::Bool = false
     chi2_filter_threshold::Float64 = 6.0
+    quantile_binning::Bool = false
 end
 
 """

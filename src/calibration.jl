@@ -150,35 +150,61 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     reported_var_nm2 = ((var_x_vec .+ var_y_vec) ./ 2) .* 1e6
     observed_var_nm2 = ((dx_vec .^ 2 .+ dy_vec .^ 2) ./ 2) .* 1e6
 
-    # Equal-width bins with minimum 5 points per bin
-    x_min, x_max = extrema(reported_var_nm2)
-    x_range = x_max - x_min
+    # Bin the (CRLB, observed) pairs with minimum 5 points per bin.
+    # Equal-width binning over a heavy-tailed CRLB distribution piles the bulk into
+    # bin 1 and starves the middle bins; quantile binning spreads ~n_bins
+    # well-populated points across the actual data density (config.quantile_binning).
     n_bins = 20
-    bin_width = x_range / n_bins
 
     bin_centers = Float64[]
     bin_observed = Float64[]
     bin_var = Float64[]
     n_per_bin = Int[]
 
-    for i in 1:n_bins
-        bin_lo = x_min + (i - 1) * bin_width
-        bin_hi = x_min + i * bin_width
+    if config.quantile_binning
+        # Equal-count bins: sort by CRLB, split into n_bins contiguous, equal-size chunks
+        order = sortperm(reported_var_nm2)
+        n = length(order)
+        for i in 1:n_bins
+            lo = floor(Int, (i - 1) * n / n_bins) + 1
+            hi = floor(Int, i * n / n_bins)
+            hi < lo && continue
+            idx = order[lo:hi]
+            bin_x = reported_var_nm2[idx]
+            bin_y = observed_var_nm2[idx]
 
-        if i == n_bins
-            mask = (reported_var_nm2 .>= bin_lo) .& (reported_var_nm2 .<= bin_hi)
-        else
-            mask = (reported_var_nm2 .>= bin_lo) .& (reported_var_nm2 .< bin_hi)
+            if length(bin_x) >= 5
+                push!(bin_centers, mean(bin_x))
+                push!(bin_observed, mean(bin_y))
+                push!(bin_var, var(bin_y))
+                push!(n_per_bin, length(bin_x))
+            end
         end
+    else
+        # Equal-width bins
+        x_min, x_max = extrema(reported_var_nm2)
+        x_range = x_max - x_min
+        bin_width = x_range / n_bins
 
-        bin_x = reported_var_nm2[mask]
-        bin_y = observed_var_nm2[mask]
+        for i in 1:n_bins
+            bin_lo = x_min + (i - 1) * bin_width
+            bin_hi = x_min + i * bin_width
 
-        if length(bin_x) >= 5
-            push!(bin_centers, mean(bin_x))
-            push!(bin_observed, mean(bin_y))
-            push!(bin_var, var(bin_y))
-            push!(n_per_bin, length(bin_x))
+            if i == n_bins
+                mask = (reported_var_nm2 .>= bin_lo) .& (reported_var_nm2 .<= bin_hi)
+            else
+                mask = (reported_var_nm2 .>= bin_lo) .& (reported_var_nm2 .< bin_hi)
+            end
+
+            bin_x = reported_var_nm2[mask]
+            bin_y = observed_var_nm2[mask]
+
+            if length(bin_x) >= 5
+                push!(bin_centers, mean(bin_x))
+                push!(bin_observed, mean(bin_y))
+                push!(bin_var, var(bin_y))
+                push!(n_per_bin, length(bin_x))
+            end
         end
     end
 
