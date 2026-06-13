@@ -65,6 +65,32 @@ end
 function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T, E<:SMLMData.AbstractEmitter}
     t_start = time()
 
+    # Degrade gracefully on empty input: there is nothing to connect, so return
+    # the (empty) input unchanged with a zeroed info. This short-circuits before
+    # the downstream pipeline (precluster, estimateparams, ...), which otherwise
+    # reduces over empty collections and throws (e.g. `counts` on an empty frame
+    # vector, or `zero(Type{Any})` for an untyped empty emitter vector).
+    if isempty(smld.emitters)
+        # Mirror the non-empty path's calibration contract: when calibration is
+        # configured, still emit a (graceful fallback) CalibrationResult rather
+        # than `nothing`, so downstream code that reads `info.calibration.*` sees
+        # the same shape for 0 and 1-2 localizations. analyze_calibration is
+        # empty-safe (0 pairs -> calibration_applied=false fallback).
+        cal_result = config.calibration === nothing ? nothing :
+                     analyze_calibration(smld, config.calibration)
+        info = FrameConnectInfo{T}(
+            smld,                 # connected: input passthrough (no tracks to assign)
+            0, 0, 0, 0,           # n_input, n_tracks, n_combined, n_filtered
+            0.0, 0.0, 0.0, 0.0,   # k_on, k_off, k_bleach, p_miss
+            Float64[],            # initial_density
+            time() - t_start,     # elapsed_s
+            :lap,                 # algorithm
+            0,                    # n_preclusters
+            cal_result,           # calibration: nothing if disabled, else fallback
+        )
+        return (smld, info)
+    end
+
     # Prepare a ParamStruct to keep track of parameters used.
     params = ParamStruct()
     params.n_density_neighbors = config.n_density_neighbors
