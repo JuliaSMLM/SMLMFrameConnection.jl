@@ -23,6 +23,9 @@ function combinelocalizations(smld::BasicSMLD{T,E};
     track_length::Union{Tuple{Float64,Float64},Nothing}=nothing) where {T, E<:SMLMData.AbstractEmitter}
     # Extract arrays from emitters
     emitters = smld.emitters
+    # Nothing to combine: return the (empty) input unchanged. The reductions
+    # below (`counts`, `first(emitters)`) assume at least one localization.
+    isempty(emitters) && return smld
     connectID = [e.track_id for e in emitters]
     sortindices = sortperm(connectID)
     connectID = connectID[sortindices]

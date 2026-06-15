@@ -28,6 +28,11 @@ function precluster(smld::BasicSMLD{T,E},
     emitters = smld.emitters
     n_emitters = length(emitters)
 
+    # Nothing to cluster: return the (empty) input unchanged. The reductions
+    # below (`counts` on datasetnum/framenum, `first(emitters)`) assume at least
+    # one localization and otherwise throw on an empty collection.
+    n_emitters == 0 && return smld
+
     framenum = [e.frame for e in emitters]
     datasetnum = [e.dataset for e in emitters]
     x = [e.x for e in emitters]
