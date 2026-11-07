@@ -3,7 +3,7 @@ using Test, SMLMFrameConnection, SMLMData
 # Above 2^24 = 16,777,216 localizations, a Float32 index column rounded odd indices to
 # their even neighbors: track labels were written to the wrong localizations and some
 # localizations were never addressed. 16,779,216 localizations in pairs that share a
-# track_id, through the grouping step (about 20 s and 6 GB).
+# track_id, through the grouping step (about 90 s and 6 GB).
 @testset "cluster indices stay exact above 2^24 localizations" begin
     n = 2^24 + 2000
     em = Vector{Emitter2DFit{Float64}}(undef, n)

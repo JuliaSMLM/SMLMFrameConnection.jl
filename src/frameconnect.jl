@@ -112,6 +112,7 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
     smld_preclustered = precluster(smld_sorted, params)
     clusterdata = organizeclusters(smld_preclustered)
     n_preclusters = length(clusterdata)
+    _warn_large_preclusters(clusterdata, params)
 
     # Estimate rate parameters.
     params.k_on, params.k_off, params.k_bleach, params.p_miss =
@@ -132,28 +133,34 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
     connectID_final = Vector{Int}(undef, length(connectID_sorted))
     connectID_final[perm] = connectID_sorted
 
-    # Create smld_connected with updated track_id
+    # Connected localizations, in the sorted order: calibration and combination run on
+    # these, so every stage sees one order and `combined` does not depend on the input
+    # order either. `info.connected` is the same localizations in the caller's order.
     # Use emitter's native precision, not SMLD's type parameter
-    emitters = smld.emitters
-    ET = typeof(first(emitters).x)  # Get precision from emitter fields
-    new_emitters = Vector{SMLMData.Emitter2DFit{ET}}(undef, length(emitters))
-    for i in 1:length(emitters)
-        e = emitters[i]
-        new_emitters[i] = SMLMData.Emitter2DFit{ET}(
+    emitters_sorted = smld_sorted.emitters
+    ET = typeof(first(emitters_sorted).x)  # Get precision from emitter fields
+    connected_sorted = Vector{SMLMData.Emitter2DFit{ET}}(undef, length(emitters_sorted))
+    for i in eachindex(emitters_sorted)
+        e = emitters_sorted[i]
+        connected_sorted[i] = SMLMData.Emitter2DFit{ET}(
             e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy, e.σ_photons, e.σ_bg,
-            e.frame, e.dataset, connectID_final[i], e.id
+            e.frame, e.dataset, connectID_sorted[i], e.id
         )
     end
-    smld_connected = BasicSMLD(new_emitters, smld.camera, smld.n_frames,
-                                smld.n_datasets, copy(smld.metadata))
+    smld_connected_sorted = BasicSMLD(connected_sorted, smld.camera, smld.n_frames,
+                                      smld.n_datasets, copy(smld.metadata))
+    connected_caller = similar(connected_sorted)
+    connected_caller[perm] = connected_sorted
+    smld_connected = BasicSMLD(connected_caller, smld.camera, smld.n_frames,
+                               smld.n_datasets, copy(smld.metadata))
 
     # Optional uncertainty calibration (between connection and combination)
     cal_result = nothing
-    smld_to_combine = smld_connected
+    smld_to_combine = smld_connected_sorted
     if config.calibration !== nothing
-        cal_result = analyze_calibration(smld_connected, config.calibration)
+        cal_result = analyze_calibration(smld_connected_sorted, config.calibration)
         if cal_result.calibration_applied
-            smld_to_combine = apply_calibration(smld_connected, cal_result)
+            smld_to_combine = apply_calibration(smld_connected_sorted, cal_result)
         end
     end
 
@@ -193,4 +200,24 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
     )
 
     return (smld_combined, info)
+end
+
+# The LAP on a precluster of N localizations is a 2N x 2N assignment problem, whose time
+# grows as N^3 (about a minute at N = 2000). Preclusters are the connected components of
+# the neighbor links, so very dense data (several active emitters per um^2 per frame) or
+# dense clusters can join into very large ones.
+const _LARGE_PRECLUSTER = 2000
+
+function _warn_large_preclusters(clusterdata, params::ParamStruct)
+    isempty(clusterdata) && return nothing
+    sizes = size.(clusterdata, 1)
+    nmax = maximum(sizes)
+    if nmax > _LARGE_PRECLUSTER
+        @warn "frameconnect: $(count(>(_LARGE_PRECLUSTER), sizes)) precluster(s) hold more " *
+              "than $(_LARGE_PRECLUSTER) localizations (largest: $nmax). Linking time grows " *
+              "as the cube of a precluster's size; a smaller max_sigma_dist " *
+              "($(params.max_sigma_dist)) or max_frame_gap ($(params.max_frame_gap)) " *
+              "keeps preclusters smaller."
+    end
+    return nothing
 end

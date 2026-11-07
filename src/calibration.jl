@@ -43,9 +43,15 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B)
     n_valid_bins < 3 && return "Too few valid bins ($n_valid_bins < 3)"
 
     # WLS on binned data: weight = 1/var_of_bin_mean (model variance), normalized
-    predicted = A .+ B .* bin_centers
-    var_of_bin_mean = all(>(0), predicted) ? predicted .^ 2 ./ n_per_bin :
-                      bin_var ./ n_per_bin   # degenerate fit: fall back to sample variance
+    # A negative intercept can make the prediction small or negative in the lowest bins;
+    # floor it at half the slope term there (still model-based, not the bin's own
+    # sample variance). Only a non-positive slope falls back to the sample variance.
+    var_of_bin_mean = if B > 0
+        predicted = max.(A .+ B .* bin_centers, 0.5 .* B .* bin_centers)
+        predicted .^ 2 ./ n_per_bin
+    else
+        bin_var ./ n_per_bin
+    end
     weights = [v > 0 ? 1.0 / v : 0.0 for v in var_of_bin_mean]
     sum(weights) ≈ 0 && return "All bin weights are zero"
     weights = weights ./ sum(weights) .* n_valid_bins
@@ -229,6 +235,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
 
     fit = "No calibration fit was attempted"
     keep = trues(length(dx_vec))
+    converged = false
     for _ in 1:_CAL_MAX_ITER
         sx = max.(A .+ B .* vx_nm2, eps())
         sy = max.(A .+ B .* vy_nm2, eps())
@@ -238,6 +245,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         done = abs(fit.B - B) <= 1e-6 * max(1.0, abs(B)) &&
                abs(fit.A - A) <= 1e-6 * max(1.0, mean(reported_all))
         A, B = fit.A, fit.B
+        converged = done
         done && break
     end
     n_pairs = count(keep)
@@ -279,7 +287,8 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         A_um2, B, A_sigma_um2, B_sigma, r_squared, mean_chi2,
         n_pairs, n_tracks_used, n_tracks_filtered,
         bin_centers_um2, bin_observed_um2, copy(n_per_bin), frame_shifts,
-        true, ""
+        true, converged ? "" :
+              "Calibration fit did not converge in $(_CAL_MAX_ITER) iterations; the last fit was applied"
     )
 end
 

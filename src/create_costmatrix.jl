@@ -102,11 +102,15 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float64}},
     # so the solver can still use it but never prefers it. The bound uses absolute
     # values: costs can be negative, and a NaN never reaches the LAP solver (it does
     # not return on a matrix holding NaN).
+    # A -Inf (a certain event, e.g. an infinite birth density) gets the negative of that
+    # bound, so it stays the most favorable choice.
     badcosts = .!isfinite.(costmatrix) .& validcost
     if any(badcosts)
         finitecosts = costmatrix[validcost .& .!badcosts]
         bigcost = 2 * sum(abs, finitecosts; init = 0.0f0) + 1
-        costmatrix[badcosts] .= bigcost
+        for i in findall(badcosts)
+            costmatrix[i] = costmatrix[i] == -Inf32 ? -bigcost : bigcost
+        end
     end
 
     return costmatrix

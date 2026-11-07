@@ -26,7 +26,10 @@ end
         molecule = GenericFluor(photons = 3000.0, k_off = 3.0, k_on = 0.3)
         smld_native, _ = simulate(params; pattern = Nmer2D(n = 1, d = 0.0),
                                   molecule = molecule, camera = camera)
-        em = smld_native.emitters
+        # Distinct ids, so a combined localization's id names its source localization.
+        em = [Emitter2DFit{Float64}(e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy,
+                                    e.σ_photons, e.σ_bg, e.frame, e.dataset, e.track_id, i)
+              for (i, e) in enumerate(smld_native.emitters)]
         n = length(em)
         @test n > 200
         @test !issorted([(e.dataset, e.frame) for e in em])   # the case under test
@@ -40,7 +43,10 @@ end
             "reversed" => reverse(p_sorted),
             "shuffled" => randperm(MersenneTwister(1), n),
         )
-        results = Dict(k => frameconnect(withorder(p)) for (k, p) in orders)
+        cfg = FrameConnectConfig(calibration = CalibrationConfig())
+        results = Dict(k => frameconnect(withorder(p), cfg) for (k, p) in orders)
+        fields(c) = [(e.x, e.y, e.σ_x, e.σ_y, e.σ_xy, e.photons, e.frame, e.dataset, e.id,
+                      e.track_id) for e in c.emitters]
 
         ref_combined, ref_info = results["sorted"]
         ref_tracks = zeros(Int, n)
@@ -59,8 +65,24 @@ end
                 tracks[p] = [e.track_id for e in info.connected.emitters]
                 @test same_partition(tracks, ref_tracks)
                 @test [e.x for e in info.connected.emitters] == [e.x for e in em[p]]
+                # The combined output, bit for bit, and the calibration.
+                @test fields(combined) == fields(ref_combined)
+                @test info.calibration.k_scale == ref_info.calibration.k_scale
+                @test info.calibration.sigma_motion_nm == ref_info.calibration.sigma_motion_nm
             end
         end
+    end
+
+    @testset "combinelocalizations does not depend on input order" begin
+        # Each combined localization takes frame and id from its track's earliest one.
+        em = [make_emitter(5.0 + 0.001f, 5.0, f; track_id = 1) for f in (3, 1, 2)]
+        em = [Emitter2DFit{Float64}(e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy,
+                                    e.σ_photons, e.σ_bg, e.frame, e.dataset, e.track_id,
+                                    10 * e.frame) for e in em]
+        a = combinelocalizations(make_test_smld(em; n_frames = 3)).emitters[1]
+        b = combinelocalizations(make_test_smld(reverse(em); n_frames = 3)).emitters[1]
+        @test a.frame == 1 && a.id == 10
+        @test (a.x, a.y, a.σ_x, a.frame, a.id) == (b.x, b.y, b.σ_x, b.frame, b.id)
     end
 
     @testset "precluster joins every cluster a localization links to" begin

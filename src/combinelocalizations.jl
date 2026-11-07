@@ -28,7 +28,11 @@ function combinelocalizations(smld::BasicSMLD{T,E};
     # below (`counts`, `first(emitters)`) assume at least one localization.
     isempty(emitters) && return smld
     connectID = [e.track_id for e in emitters]
-    sortindices = sortperm(connectID)
+    # Order by (track, frame, x, y), so the result does not depend on the input order:
+    # each combined localization takes frame, dataset and id from its track's first
+    # localization in time.
+    sortindices = sortperm(collect(zip(connectID, (e.frame for e in emitters),
+                                       (e.x for e in emitters), (e.y for e in emitters))))
     connectID = connectID[sortindices]
     x = [e.x for e in emitters][sortindices]
     y = [e.y for e in emitters][sortindices]

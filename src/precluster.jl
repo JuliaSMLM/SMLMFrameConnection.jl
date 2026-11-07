@@ -10,11 +10,13 @@ Cluster localizations in `smld` based on distance and time thresholds in `params
 
 # Description
 Localizations in the input structure `smld` are clustered together based on
-their spatiotemporal separations.  All localizations within a spatial
-threshold of `params.max_sigma_dist*mean([σ_x σ_y])` and a temporal
-threshold of `params.max_frame_gap` of one another will be clustered together,
-meaning that these localizations now share the same unique integer value for
-their track_id field.
+their spatiotemporal separations. Each localization is linked to those of its
+`params.max_neighbors` nearest neighbors, among the localizations of the same
+dataset in its own frame and the `params.max_frame_gap` frames before it, that lie
+within `params.max_sigma_dist * (s_i + s_j)`, where `s` is a localization's mean of
+σ_x and σ_y. Preclusters are the connected components of these links: their
+localizations share the same unique integer value for their track_id field. The
+result does not depend on the order of the input.
 
 # Notes
 Pre-clustering allows localizations observed in the same frame to be in the

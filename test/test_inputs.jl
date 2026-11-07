@@ -3,7 +3,8 @@ include("test_helpers.jl")
 
 @testset "Input checks and degenerate inputs" begin
     @testset "3D localizations are refused, not flattened" begin
-        em3 = [Emitter3DFit{Float64}(5.0 + 0.001i, 5.0, 0.5, 1000.0, 10.0,
+        # x and y both vary, so the fixture is not also a zero-area precluster.
+        em3 = [Emitter3DFit{Float64}(5.0 + 0.003i, 5.0 + 0.002i^2, 0.5, 1000.0, 10.0,
                                      0.01, 0.01, 0.03, 30.0, 3.0; frame = i)
                for i in 1:4]
         smld3 = BasicSMLD(em3, make_test_camera(), 4, 1, Dict{String,Any}())

@@ -32,7 +32,7 @@ julia --project=.
 
 `frameconnect()` in `frameconnect.jl` is the main entry point. It orchestrates a 5-stage pipeline:
 
-`frameconnect` first sorts a copy of the input by `(dataset, frame, x, y)` and runs every stage on it, so results do not depend on input order; track IDs are mapped back so `info.connected` keeps the caller's order. Input carrying `z` is refused (`_check_2d`).
+`frameconnect` first sorts a copy of the input by `(dataset, frame, x, y)` and runs every stage on it (calibration and combination included), so results do not depend on input order; only `info.connected` is permuted back to the caller's order. Input carrying `z` is refused (`_check_2d`). A precluster above 2000 localizations triggers a `@warn` (the LAP is O(N³) in precluster size).
 
 1. **Precluster** (`precluster.jl`): Spatiotemporal clustering using KDTree nearest-neighbor search. Links each localization to its `max_neighbors` nearest neighbors within `max_sigma_dist * (mean σ_i + mean σ_j)` among the localizations of its frame and the `max_frame_gap` frames before; preclusters are the connected components of those links (union-find). Stores cluster assignments in emitter `track_id` fields.
 
