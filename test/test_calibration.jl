@@ -1,3 +1,6 @@
+using Test, SMLMFrameConnection, SMLMData
+include("test_helpers.jl")
+
 # Helper: deterministic pseudo-random from hash (no Random import needed)
 _hashval(seed::Int, i::Int) = mod(hash(seed + i * 7919), UInt64) / typemax(UInt64)
 # Box-Muller: two uniform -> one normal

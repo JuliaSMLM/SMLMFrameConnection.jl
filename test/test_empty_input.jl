@@ -1,3 +1,6 @@
+using Test, SMLMFrameConnection, SMLMData
+include("test_helpers.jl")
+
 # Robustness tests for empty (0) and tiny (1-2) localization inputs.
 #
 # frameconnect and its building blocks previously crashed on near-empty data
