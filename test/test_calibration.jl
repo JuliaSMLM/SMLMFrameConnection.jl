@@ -1,6 +1,9 @@
 using Test, SMLMFrameConnection, SMLMData
 include("test_helpers.jl")
 
+using Random
+using SMLMSim
+
 # Helper: deterministic pseudo-random from hash (no Random import needed)
 _hashval(seed::Int, i::Int) = mod(hash(seed + i * 7919), UInt64) / typemax(UInt64)
 # Box-Muller: two uniform -> one normal
@@ -11,6 +14,40 @@ function _hashnorm(seed::Int, i::Int)
 end
 
 @testset "Calibration" begin
+    # Tracks of `nframes` consecutive localizations at fixed positions; photon counts
+    # vary across tracks so the CRLB spans a range. Noise comes from SMLMSim's
+    # apply_noise: the CRLB part with σ_psf (σ = σ_psf/√N), then, if σ_motion > 0, a
+    # motion jitter of σ_motion per localization (drawn with photons = 1 so the draw
+    # has exactly that σ). The σ_x, σ_y written to the data are the true CRLB divided
+    # by k, so the data's CRLB is k times too small.
+    function calibration_fixture(; k, σ_motion, ntracks = 2000, nframes = 6, seed = 1)
+        Random.seed!(seed)
+        cam = make_test_camera()
+        model = Emitter2DFit{Float64}[]
+        for t in 1:ntracks
+            x, y = 2.0 + 46.0 * rand(), 2.0 + 46.0 * rand()
+            N = 20.0 + 380.0 * rand()            # CRLB 29 nm down to 6.5 nm at σ_psf 0.13
+            for f in 1:nframes
+                push!(model, Emitter2DFit{Float64}(x, y, N, 10.0, 0.0, 0.0, 0.0, 1.0, 1.0,
+                                                   f, 1, t, 0))
+            end
+        end
+        smld = SMLMSim.apply_noise(BasicSMLD(model, cam, nframes, 1, Dict{String,Any}()), 0.13)
+        em = smld.emitters
+        if σ_motion > 0
+            unit = [Emitter2DFit{Float64}(e.x, e.y, 1.0, e.bg, e.σ_x, e.σ_y, 0.0, 1.0, 1.0,
+                                          e.frame, e.dataset, e.track_id, e.id) for e in em]
+            jittered = SMLMSim.apply_noise(BasicSMLD(unit, cam, nframes, 1, Dict{String,Any}()),
+                                           σ_motion).emitters
+        else
+            jittered = em
+        end
+        out = [Emitter2DFit{Float64}(j.x, j.y, e.photons, e.bg, e.σ_x / k, e.σ_y / k, 0.0,
+                                     1.0, 1.0, e.frame, e.dataset, e.track_id, e.id)
+               for (e, j) in zip(em, jittered)]
+        return BasicSMLD(out, cam, nframes, 1, Dict{String,Any}())
+    end
+
     @testset "CalibrationConfig construction" begin
         cc = CalibrationConfig()
         @test cc.clamp_k_to_one == true
@@ -35,35 +72,8 @@ end
     @testset "analyze_calibration with synthetic tracks" begin
         true_sigma_motion = 0.005  # 5 nm in μm
         true_k = 1.5
-
-        emitters = Emitter2DFit{Float64}[]
-        track_id = 0
-        n_tracks = 200
-        frames_per_track = 5
-        seed = 0
-
-        for t in 1:n_tracks
-            track_id += 1
-            seed += 1
-            base_x = 5.0 + _hashval(seed, 1) * 40.0
-            base_y = 5.0 + _hashval(seed, 2) * 40.0
-            crlb_sigma = 0.01 + _hashval(seed, 3) * 0.03
-
-            for f in 1:frames_per_track
-                seed += 1
-                true_sigma = sqrt(true_sigma_motion^2 + true_k^2 * crlb_sigma^2)
-                x = base_x + _hashnorm(seed, 1) * true_sigma
-                y = base_y + _hashnorm(seed, 2) * true_sigma
-                push!(emitters, Emitter2DFit{Float64}(
-                    x, y, 1000.0, 10.0,
-                    crlb_sigma, crlb_sigma, 0.0,
-                    31.6, 3.16,
-                    f, 1, track_id, 0
-                ))
-            end
-        end
-
-        smld = make_test_smld(emitters; n_frames=frames_per_track)
+        smld = calibration_fixture(k = true_k, σ_motion = true_sigma_motion,
+                                   ntracks = 200, nframes = 5)
         config = CalibrationConfig(clamp_k_to_one=false)
         result = SMLMFrameConnection.analyze_calibration(smld, config)
 
@@ -74,8 +84,7 @@ end
         @test result.n_tracks_used > 0
         @test result.r_squared > 0.3
 
-        @test result.k_scale > 1.0
-        @test result.k_scale < 3.0
+        @test abs(result.k_scale - true_k) < 0.25   # 800 pairs: sd of k is about 0.1
         @test result.sigma_motion_nm >= 0.0
         @test result.sigma_motion_nm < 20.0
 
@@ -84,6 +93,54 @@ end
         @test length(result.bin_counts) == length(result.bin_centers)
         @test all(result.bin_counts .>= 5)
         @test haskey(result.frame_shifts, 1)
+    end
+
+    @testset "analyze_calibration recovers k and σ_motion" begin
+        # Before 2026-11 a fixed cut at chi² 6 on the uncalibrated CRLB gave k = 1.14
+        # for a true 2.0, and the pair intercept 2σ_motion² was read as σ_motion²
+        # (√2 too large once the cut is gone: 13.8 nm for a true 10).
+        cfg = CalibrationConfig(clamp_k_to_one = false)
+        for (k, σm_nm) in ((1.0, 0.0), (1.0, 10.0), (1.5, 5.0), (2.0, 0.0), (2.0, 5.0))
+            r = SMLMFrameConnection.analyze_calibration(
+                calibration_fixture(k = k, σ_motion = σm_nm / 1000), cfg)
+            @testset "k = $k, σ_motion = $σm_nm nm" begin
+                @test r.calibration_applied
+                @test abs(r.k_scale - k) < 0.05 * k
+                @test abs(r.sigma_motion_nm - σm_nm) < 2.5
+                # The fit line goes through the stored (corrected) bins, within each
+                # bin's noise: a bin mean of n pair values (dx²+dy²)/2 has relative
+                # standard error about 1/√n.
+                @test all(abs.(r.A .+ r.B .* r.bin_centers .- r.bin_observed) .<
+                          5 .* r.bin_observed ./ sqrt.(r.bin_counts))
+            end
+        end
+    end
+
+    @testset "analyze_calibration ignores mismatched pairs" begin
+        # 1% of the pairs are wrong links far beyond the localization error.
+        smld = calibration_fixture(k = 1.5, σ_motion = 0.0)
+        em = copy(smld.emitters)
+        Random.seed!(7)
+        for i in 6:6:length(em)
+            rand() < 0.06 || continue
+            e = em[i]
+            em[i] = Emitter2DFit{Float64}(e.x + 0.3, e.y, e.photons, e.bg, e.σ_x, e.σ_y,
+                                          0.0, 1.0, 1.0, e.frame, e.dataset, e.track_id, e.id)
+        end
+        smld_bad = BasicSMLD(em, smld.camera, smld.n_frames, 1, Dict{String,Any}())
+        r = SMLMFrameConnection.analyze_calibration(smld_bad,
+                CalibrationConfig(clamp_k_to_one = false))
+        @test r.calibration_applied
+        @test abs(r.k_scale - 1.5) < 0.075
+    end
+
+    @testset "apply_calibration adds σ_motion² per localization" begin
+        smld = calibration_fixture(k = 1.0, σ_motion = 0.010)
+        r = SMLMFrameConnection.analyze_calibration(smld, CalibrationConfig(clamp_k_to_one = false))
+        cal = SMLMFrameConnection.apply_calibration(smld, r)
+        e0, e1 = smld.emitters[1], cal.emitters[1]
+        @test e1.σ_x^2 ≈ (r.sigma_motion_nm / 1000)^2 + r.k_scale^2 * e0.σ_x^2
+        @test r.A ≈ 2 * (r.sigma_motion_nm / 1000)^2 rtol = 1e-8
     end
 
     @testset "analyze_calibration with uniform brightness" begin

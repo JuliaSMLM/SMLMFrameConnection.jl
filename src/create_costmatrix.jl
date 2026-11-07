@@ -1,5 +1,5 @@
 """
-    costmatrix = create_costmatrix(clusterdata::Vector{Matrix{Float32}},
+    costmatrix = create_costmatrix(clusterdata::Vector{Matrix{Float64}},
         params::ParamStruct, clusterind::Int64, nframes::Int64,
         base_rho_on::Vector{Float64})
 
@@ -20,7 +20,7 @@ Forbidden connections are indicated by `missing`.
 `base_rho_on` is a precomputed unit-density on-state density curve of length
 `nframes`, shared across all clusters to avoid per-cluster allocation.
 """
-function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
+function create_costmatrix(clusterdata::Vector{Matrix{Float64}},
     params::ParamStruct, clusterind::Int64, nframes::Int64,
     base_rho_on::Vector{Float64})
     # Extract some entries from clusterdata and params to make the code more
@@ -97,12 +97,16 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
         validcost[nn, birth_range] .= true
     end
 
-    # If any of the valid assignments (```validcost```) are inf, we should
-    # replace them with a usable value.
-    badcosts = isinf.(costmatrix)
-    if any(badcosts[validcost[:]])
-        costsum = sum(costmatrix[.!badcosts])
-        costmatrix[badcosts[:] .& validcost[:]] .= 2 * costsum
+    # A valid assignment with a non-finite cost (Inf from p_miss = 0, NaN from a
+    # degenerate density) gets a cost larger than any assignment made of finite costs,
+    # so the solver can still use it but never prefers it. The bound uses absolute
+    # values: costs can be negative, and a NaN never reaches the LAP solver (it does
+    # not return on a matrix holding NaN).
+    badcosts = .!isfinite.(costmatrix) .& validcost
+    if any(badcosts)
+        finitecosts = costmatrix[validcost .& .!badcosts]
+        bigcost = 2 * sum(abs, finitecosts; init = 0.0f0) + 1
+        costmatrix[badcosts] .= bigcost
     end
 
     return costmatrix

@@ -11,7 +11,10 @@ uncertainties before track combination: `Σ_corrected = σ_motion² I + k² Σ_C
 
 # Fields
 - `clamp_k_to_one::Bool=true`: Clamp k_scale to minimum of 1.0 (CRLB is a lower bound)
-- `filter_high_chi2::Bool=false`: Filter tracks with high chi² pairs before fitting
+- `filter_high_chi2::Bool=false`: Filter tracks with high chi² pairs before fitting. The chi² here
+  uses the uncalibrated CRLB, so this filter removes the tracks that show a too-small CRLB and
+  pulls `k_scale` toward 1; the fit itself already leaves out mismatched pairs (see
+  [`CalibrationResult`](@ref)).
 - `chi2_filter_threshold::Float64=6.0`: Chi² threshold for track filtering (per pair)
 """
 Base.@kwdef struct CalibrationConfig <: SMLMData.AbstractSMLMConfig
@@ -27,22 +30,29 @@ Output diagnostics from uncertainty calibration. Returned in `FrameConnectInfo.c
 when calibration is enabled.
 
 The calibration model fits: `observed_var = A + B * CRLB_var` where
-`A = σ_motion²` (additive motion/vibration variance) and `B = k²` (CRLB scale factor).
+`observed_var` is the per-axis variance of the difference of two consecutive
+localizations, `CRLB_var` the sum of their per-axis CRLB variances, so the intercept is
+`A = 2σ_motion²` (each localization carries its own motion/vibration jitter) and
+`B = k²` (CRLB scale factor).
+
+The fit leaves out pairs whose chi² under the current fit exceeds the chi²(2) 99.7% point
+(mismatched pairs), corrects the truncated bin means for the variance the cut removes, and
+iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when the model holds.
 
 # Fields
-- `sigma_motion_nm::Float64`: Estimated motion std dev in nm (√A × 1000)
+- `sigma_motion_nm::Float64`: Estimated per-localization motion std dev in nm (√(A/2) × 1000)
 - `k_scale::Float64`: CRLB scale factor (√B, or clamped √B if clamp_k_to_one)
-- `A::Float64`: Fit intercept (σ_motion² in μm²)
+- `A::Float64`: Fit intercept (pair-difference variance 2σ_motion², in μm²)
 - `B::Float64`: Fit slope (k²)
 - `A_sigma::Float64`: Standard error of A
 - `B_sigma::Float64`: Standard error of B
 - `r_squared::Float64`: R² of the WLS fit
 - `mean_chi2::Float64`: Mean chi² across all frame-to-frame pairs
-- `n_pairs::Int`: Number of frame-to-frame pairs used in fit
+- `n_pairs::Int`: Number of frame-to-frame pairs used in the final fit (after the chi² cut)
 - `n_tracks_used::Int`: Number of tracks contributing pairs
 - `n_tracks_filtered::Int`: Number of tracks removed by chi² filter
 - `bin_centers::Vector{Float64}`: Bin centers (CRLB variance) for diagnostic plots
-- `bin_observed::Vector{Float64}`: Bin observed variance for diagnostic plots
+- `bin_observed::Vector{Float64}`: Bin observed variance (truncation-corrected) for diagnostic plots; the fit line is `A + B * bin_centers`
 - `bin_counts::Vector{Int}`: Number of pairs per bin (parallel to bin_centers/bin_observed); use to grey/drop low-statistics bins in diagnostic plots
 - `frame_shifts::Dict{Int, Vector{NTuple{2,Float64}}}`: Per-dataset (dx,dy) shifts for jitter plots
 - `calibration_applied::Bool`: Whether calibration was actually applied (false on fallback)
@@ -171,4 +181,18 @@ function to_emitter2dfit(e::SMLMData.AbstractEmitter, track_id::Int)
         e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy, e.σ_photons, e.σ_bg,
         e.frame, e.dataset, track_id, e.id
     )
+end
+"""
+    _check_2d(smld, fname)
+
+Throw an `ArgumentError` if any localization in `smld` carries a z coordinate. Frame
+connection is 2D: it builds `Emitter2DFit` output and would silently drop z and σ_z.
+"""
+function _check_2d(smld::BasicSMLD, fname::AbstractString)
+    if any(e -> hasproperty(e, :z), smld.emitters)
+        throw(ArgumentError("$fname: the localizations carry z " *
+            "($(eltype(smld.emitters))); frame connection is 2D only and would drop " *
+            "z and σ_z. Pass 2D localizations (for example Emitter2DFit)."))
+    end
+    return nothing
 end

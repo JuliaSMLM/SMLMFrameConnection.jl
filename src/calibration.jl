@@ -4,6 +4,75 @@
 # variance (σ_motion²) and CRLB scale factor (k²), then applies corrected
 # uncertainties: Σ_corrected = σ_motion² I + k² Σ_CRLB
 
+# Pairs whose chi² under the current fit exceeds the chi²(2) 99.7% point are left out
+# of the fit as mismatches.
+const _CAL_CHI2_CUT = -2 * log(0.003)
+# For S ~ chi²(2) = u₁ + u₂ (u iid chi²(1)), E[u₁ | S ≤ c] = E[S | S ≤ c] / 2
+# = 1 - (c/2)·e^(-c/2) / (1 - e^(-c/2)). Dividing the truncated per-axis mean square by
+# this factor makes it an unbiased estimate of the per-axis pair variance again.
+const _CAL_TRUNC_FACTOR = 1 - (_CAL_CHI2_CUT / 2) * exp(-_CAL_CHI2_CUT / 2) /
+                              (1 - exp(-_CAL_CHI2_CUT / 2))
+const _CAL_MAX_ITER = 100
+
+# Weighted least squares of binned `observed` on binned `reported` over the pairs in
+# `keep`; `bin_of[i]` is pair i's bin. Bins with fewer than 5 pairs are skipped. Each bin
+# mean is weighted by n / v², with v = A + B * center the variance the current fit (A, B)
+# predicts: a pair's (dx² + dy²)/2 is v·chi²(2)/2, whose variance is v². Weighting by a
+# bin's own sample variance instead favors bins whose mean came out low (for chi²-like
+# values the sample mean and variance rise together), which biased k low on small data.
+# Returns a NamedTuple, or a String naming why no fit was possible.
+function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B)
+    bin_centers = Float64[]
+    bin_observed = Float64[]
+    bin_var = Float64[]
+    n_per_bin = Int[]
+    members = [Int[] for _ in 1:n_bins]
+    for i in eachindex(reported)
+        keep[i] && push!(members[bin_of[i]], i)
+    end
+    for m in members
+        if length(m) >= 5
+            push!(bin_centers, mean(@view reported[m]))
+            push!(bin_observed, mean(@view observed[m]))
+            push!(bin_var, var(@view observed[m]))
+            push!(n_per_bin, length(m))
+        end
+    end
+
+    n_valid_bins = length(bin_centers)
+    n_valid_bins < 3 && return "Too few valid bins ($n_valid_bins < 3)"
+
+    # WLS on binned data: weight = 1/var_of_bin_mean (model variance), normalized
+    predicted = A .+ B .* bin_centers
+    var_of_bin_mean = all(>(0), predicted) ? predicted .^ 2 ./ n_per_bin :
+                      bin_var ./ n_per_bin   # degenerate fit: fall back to sample variance
+    weights = [v > 0 ? 1.0 / v : 0.0 for v in var_of_bin_mean]
+    sum(weights) ≈ 0 && return "All bin weights are zero"
+    weights = weights ./ sum(weights) .* n_valid_bins
+
+    X = hcat(ones(n_valid_bins), bin_centers)
+    W = Diagonal(weights)
+    XtWX = X' * W * X
+    XtWy = X' * W * bin_observed
+    det_XtWX = XtWX[1,1] * XtWX[2,2] - XtWX[1,2]^2
+    abs(det_XtWX) < eps() && return "Singular WLS matrix"
+
+    coeffs = XtWX \ XtWy
+    y_pred = X * coeffs
+    residuals = bin_observed .- y_pred
+    ss_res = sum(weights .* residuals .^ 2)
+    ss_tot = sum(weights .* (bin_observed .- mean(bin_observed)) .^ 2)
+    r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : NaN
+    mse = ss_res / max(1, n_valid_bins - 2)
+    var_coeffs = mse * inv(XtWX)
+
+    return (A = coeffs[1], B = coeffs[2],
+            A_sigma = sqrt(max(0.0, var_coeffs[1, 1])),
+            B_sigma = sqrt(max(0.0, var_coeffs[2, 2])),
+            r_squared = r_squared, bin_centers = bin_centers,
+            bin_observed = bin_observed, n_per_bin = n_per_bin)
+end
+
 """
     analyze_calibration(smld::BasicSMLD, config::CalibrationConfig) -> CalibrationResult
 
@@ -12,7 +81,10 @@ calibration parameters.
 
 Collects consecutive-frame pairs within each track, computes observed positional
 variance vs CRLB variance, and fits the model: `observed_var = A + B * CRLB_var`
-using weighted least squares on binned data.
+using weighted least squares on binned data. `A = 2σ_motion²` (both localizations of a
+pair carry motion jitter) and `B = k²`. Pairs whose chi² under the current fit exceeds
+the chi²(2) 99.7% point are left out as mismatches; the truncated bin means are
+corrected for the variance the cut removes, and the fit iterates to convergence.
 
 Falls back gracefully (returns `calibration_applied=false`) if fewer than 100
 frame-to-frame pairs are available or if the fit quality is poor (R² < 0.1).
@@ -126,118 +198,70 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         end
     end
 
-    # Per-pair chi² filtering: remove pairs with chi² > 6.0 (double-fits, mismatches)
-    # This is critical -- reduces scatter in bins before fitting
-    chi2_per_pair = dx_vec .^ 2 ./ max.(var_x_vec, eps()) .+
-                    dy_vec .^ 2 ./ max.(var_y_vec, eps())
-    chi2_threshold = 6.0  # ~99.7% of chi²(2) is below this
-    good_mask = chi2_per_pair .<= chi2_threshold
+    # Model, per axis, for the difference of two consecutive localizations of one
+    # emitter: Var(Δx) = A + B·(σ_x1² + σ_x2²). Each localization carries its own
+    # motion jitter, so the intercept is A = 2·σ_motion²; the slope is B = k².
+    #
+    # Fit robustly to mismatched pairs (double fits, wrong links) without biasing the
+    # scale: a pair is left out when its chi² under the CURRENT fit exceeds the
+    # chi²(2) 99.7% point, the truncated bin means are divided by the factor the
+    # truncation removes, and the fit repeats until it settles. A fixed cut on the
+    # uncalibrated chi² (the earlier method) removes exactly the large pairs that
+    # carry the excess when the CRLB is too small, and biases k toward 1.
+    vx_nm2 = var_x_vec .* 1e6
+    vy_nm2 = var_y_vec .* 1e6
+    dx2_nm2 = dx_vec .^ 2 .* 1e6
+    dy2_nm2 = dy_vec .^ 2 .* 1e6
+    reported_all = (vx_nm2 .+ vy_nm2) ./ 2
+    observed_all = ((dx2_nm2 .+ dy2_nm2) ./ 2) ./ _CAL_TRUNC_FACTOR
 
-    n_pairs_filtered = sum(.!good_mask)
-    dx_vec = dx_vec[good_mask]
-    dy_vec = dy_vec[good_mask]
-    var_x_vec = var_x_vec[good_mask]
-    var_y_vec = var_y_vec[good_mask]
-    n_pairs = length(dx_vec)
+    # Equal-width bin edges over all pairs, fixed across iterations.
+    x_min, x_max = extrema(reported_all)
+    n_bins = 20
+    bin_width = (x_max - x_min) / n_bins
+    bin_of = [bin_width > 0 ? clamp(floor(Int, (r - x_min) / bin_width) + 1, 1, n_bins) : 1
+              for r in reported_all]
+
+    # Start from the median: with A = 0, chi²/B is chi²(2), whose median is 2·log(2).
+    z_raw = dx2_nm2 ./ max.(vx_nm2, eps()) .+ dy2_nm2 ./ max.(vy_nm2, eps())
+    A = 0.0
+    B = median(z_raw) / (2 * log(2))
+
+    fit = "No calibration fit was attempted"
+    keep = trues(length(dx_vec))
+    for _ in 1:_CAL_MAX_ITER
+        sx = max.(A .+ B .* vx_nm2, eps())
+        sy = max.(A .+ B .* vy_nm2, eps())
+        keep = (dx2_nm2 ./ sx .+ dy2_nm2 ./ sy) .<= _CAL_CHI2_CUT
+        fit = _binned_wls(reported_all, observed_all, bin_of, keep, n_bins, A, B)
+        fit isa String && break
+        done = abs(fit.B - B) <= 1e-6 * max(1.0, abs(B)) &&
+               abs(fit.A - A) <= 1e-6 * max(1.0, mean(reported_all))
+        A, B = fit.A, fit.B
+        done && break
+    end
+    n_pairs = count(keep)
 
     if n_pairs < 100
         return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
                                 "Too few pairs after chi² pair filtering ($n_pairs < 100)";
                                 n_tracks_filtered=n_tracks_filtered)
     end
-
-    # Per-axis averaging and convert to nm² for fitting
-    reported_var_nm2 = ((var_x_vec .+ var_y_vec) ./ 2) .* 1e6
-    observed_var_nm2 = ((dx_vec .^ 2 .+ dy_vec .^ 2) ./ 2) .* 1e6
-
-    # Equal-width bins with minimum 5 points per bin
-    x_min, x_max = extrema(reported_var_nm2)
-    x_range = x_max - x_min
-    n_bins = 20
-    bin_width = x_range / n_bins
-
-    bin_centers = Float64[]
-    bin_observed = Float64[]
-    bin_var = Float64[]
-    n_per_bin = Int[]
-
-    for i in 1:n_bins
-        bin_lo = x_min + (i - 1) * bin_width
-        bin_hi = x_min + i * bin_width
-
-        if i == n_bins
-            mask = (reported_var_nm2 .>= bin_lo) .& (reported_var_nm2 .<= bin_hi)
-        else
-            mask = (reported_var_nm2 .>= bin_lo) .& (reported_var_nm2 .< bin_hi)
-        end
-
-        bin_x = reported_var_nm2[mask]
-        bin_y = observed_var_nm2[mask]
-
-        if length(bin_x) >= 5
-            push!(bin_centers, mean(bin_x))
-            push!(bin_observed, mean(bin_y))
-            push!(bin_var, var(bin_y))
-            push!(n_per_bin, length(bin_x))
-        end
-    end
-
-    n_valid_bins = length(bin_centers)
-    if n_valid_bins < 3
-        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                "Too few valid bins ($n_valid_bins < 3)";
+    if fit isa String
+        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts, fit;
                                 n_tracks_filtered=n_tracks_filtered)
     end
 
-    # WLS on binned data: weight = 1/var_of_bin_mean, normalized
-    var_of_bin_mean = bin_var ./ n_per_bin
-    weights = [v > 0 ? 1.0 / v : 0.0 for v in var_of_bin_mean]
-
-    if sum(weights) ≈ 0
-        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                "All bin weights are zero";
-                                n_tracks_filtered=n_tracks_filtered)
-    end
-
-    weights = weights ./ sum(weights) .* n_valid_bins
-
-    X = hcat(ones(n_valid_bins), bin_centers)
-    W = Diagonal(weights)
-    XtWX = X' * W * X
-    XtWy = X' * W * bin_observed
-
-    det_XtWX = XtWX[1,1] * XtWX[2,2] - XtWX[1,2]^2
-    if abs(det_XtWX) < eps()
-        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                "Singular WLS matrix";
-                                n_tracks_filtered=n_tracks_filtered)
-    end
-
-    coeffs = XtWX \ XtWy
-    A = coeffs[1]  # σ_motion² in nm²
-    B = coeffs[2]  # k²
-
-    # R² and standard errors
-    y_pred = X * coeffs
-    residuals = bin_observed .- y_pred
-    ss_res = sum(weights .* residuals .^ 2)
-    ss_tot = sum(weights .* (bin_observed .- mean(bin_observed)) .^ 2)
-    r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : NaN
-
+    (; bin_centers, bin_observed, n_per_bin, r_squared, A_sigma, B_sigma) = fit
     if r_squared < 0.1
         return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
                                 "Poor fit quality (R² = $(round(r_squared, digits=3)))";
                                 n_tracks_filtered=n_tracks_filtered)
     end
 
-    mse = ss_res / max(1, n_valid_bins - 2)
-    var_coeffs = mse * inv(XtWX)
-    A_sigma = sqrt(max(0.0, var_coeffs[1, 1]))
-    B_sigma = sqrt(max(0.0, var_coeffs[2, 2]))
-
-    # Extract parameters -- fit was in nm², convert to μm² for storage
-    # A is σ_motion² (nm²), B is k² (dimensionless)
-    sigma_motion_nm = sqrt(max(0.0, A))
+    # Extract parameters -- fit was in nm², convert to μm² for storage.
+    # A is the pair intercept 2·σ_motion² (nm²), B is k² (dimensionless).
+    sigma_motion_nm = sqrt(max(0.0, A) / 2)
     k_sq = max(0.0, B)
     k_scale = sqrt(k_sq)
     if config.clamp_k_to_one

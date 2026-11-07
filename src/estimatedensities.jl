@@ -1,9 +1,10 @@
 using SMLMData
 using NearestNeighbors
+using Statistics
 
 """
     initial_density = estimatedensities(smld::BasicSMLD{T,E},
-        clusterdata::Vector{Matrix{Float32}}, params::ParamStruct) where {T, E<:SMLMData.AbstractEmitter}
+        clusterdata::Vector{Matrix{Float64}}, params::ParamStruct) where {T, E<:SMLMData.AbstractEmitter}
 
 Estimate local emitter densities for clusters in `smld` and `clusterdata`.
 
@@ -14,7 +15,7 @@ throughout the entire set of data as well as some of the rate parameters
 provided in `params`.
 """
 function estimatedensities(smld::BasicSMLD{T,E},
-    clusterdata::Vector{Matrix{Float32}},
+    clusterdata::Vector{Matrix{Float64}},
     params::ParamStruct) where {T, E<:SMLMData.AbstractEmitter}
 
     # Define some new parameters.
@@ -35,6 +36,11 @@ function estimatedensities(smld::BasicSMLD{T,E},
         else
             clusterarea = (maximum(clusterdata[1][:, 1]) - minimum(clusterdata[1][:, 1])) *
                           (maximum(clusterdata[1][:, 2]) - minimum(clusterdata[1][:, 2]))
+            # Localizations sharing an x or a y value span zero area; floor the area at
+            # the localization error ellipse so the density stays finite.
+            locarea = pi * Statistics.mean(clusterdata[1][:, 3]) *
+                      Statistics.mean(clusterdata[1][:, 4])
+            clusterarea = max(clusterarea, locarea)
             initial_density = (1 / clusterarea) *
                              ((params.k_bleach / params.k_off) / (1 - params.p_miss)) /
                              (1 - exp(-params.k_bleach * dutycycle * (maxframe - 1)))

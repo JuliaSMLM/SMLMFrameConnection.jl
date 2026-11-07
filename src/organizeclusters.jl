@@ -22,10 +22,12 @@ function organizeclusters(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.AbstractEm
     framenum = [e.frame for e in emitters]
     datasetnum = [e.dataset for e in emitters]
 
-    # Sort by connectID
+    # Sort by connectID, then frame (the cost matrix links a row only to later rows).
     # Column layout: 1:x 2:y 3:σ_x 4:σ_y 5:σ_xy 6:frame 7:dataset 8:connectID
-    sortindices = sortperm(connectID)
-    combineddata = [x y σ_x σ_y σ_xy framenum datasetnum connectID]
+    # The matrices are Float64 so the integer columns (frame, connectID, and the input
+    # index in column 9) stay exact: Float32 holds integers exactly only up to 2^24.
+    sortindices = sortperm(collect(zip(connectID, framenum)))
+    combineddata = Float64[x y σ_x σ_y σ_xy framenum datasetnum connectID]
     combineddata = combineddata[sortindices, :]
 
     # Loop over preclusters and organize member localizations into a more
@@ -35,7 +37,7 @@ function organizeclusters(smld::BasicSMLD{T,E}) where {T, E<:SMLMData.AbstractEm
     ncumulative = [0; cumsum(npercluster)]
     uniqueIDs = unique(connectID)
     nclusters = length(uniqueIDs)
-    clusterdata = Vector{Matrix{Float32}}(undef, nclusters)
+    clusterdata = Vector{Matrix{Float64}}(undef, nclusters)
     for nn = 1:nclusters
         clusterind = (1:npercluster[nn]) .+ ncumulative[nn]
         clusterdata[nn] = [combineddata[clusterind, :] sortindices[clusterind]]

@@ -15,8 +15,11 @@ localizations in each pre-cluster, and 4) combining the connected localizations
 using their MLE position estimate assuming Gaussian noise.
 
 # Arguments
-- `smld::BasicSMLD`: Localizations to connect. Must contain emitters with valid
-                     position uncertainties (σ_x, σ_y).
+- `smld::BasicSMLD`: 2D localizations to connect, in any order. Must contain emitters
+                     with valid position uncertainties (σ_x, σ_y). Localizations that
+                     carry z (3D) are refused with an `ArgumentError`; output emitters are
+                     `Emitter2DFit`, so fields beyond those (e.g. a fit p-value) are not
+                     carried into `info.connected`.
 - `config::FrameConnectConfig`: Configuration parameters (optional, can use kwargs instead)
 
 # Keyword Arguments (equivalent to FrameConnectConfig fields)
@@ -64,6 +67,7 @@ end
 
 function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T, E<:SMLMData.AbstractEmitter}
     t_start = time()
+    _check_2d(smld, "frameconnect")
 
     # Degrade gracefully on empty input: there is nothing to connect, so return
     # the (empty) input unchanged with a zeroed info. This short-circuits before
@@ -91,6 +95,12 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
         return (smld, info)
     end
 
+    # Run the pipeline on a copy sorted by (dataset, frame, x, y), so the result does
+    # not depend on the order of the input; track IDs are mapped back to input order.
+    perm = sortperm(smld.emitters; by = e -> (e.dataset, e.frame, e.x, e.y))
+    smld_sorted = BasicSMLD(smld.emitters[perm], smld.camera, smld.n_frames,
+                            smld.n_datasets, smld.metadata)
+
     # Prepare a ParamStruct to keep track of parameters used.
     params = ParamStruct()
     params.n_density_neighbors = config.n_density_neighbors
@@ -99,7 +109,7 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
     params.max_neighbors = config.max_neighbors
 
     # Generate pre-clusters of localizations in `smld`.
-    smld_preclustered = precluster(smld, params)
+    smld_preclustered = precluster(smld_sorted, params)
     clusterdata = organizeclusters(smld_preclustered)
     n_preclusters = length(clusterdata)
 
@@ -117,8 +127,10 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
     # Connect localizations in `smld` by solving the LAP.
     # Extract track_id from preclustered emitters
     connectID_precluster = [e.track_id for e in smld_preclustered.emitters]
-    connectID_final = connectlocalizations(connectID_precluster,
+    connectID_sorted = connectlocalizations(connectID_precluster,
         clusterdata, params, nframes)
+    connectID_final = Vector{Int}(undef, length(connectID_sorted))
+    connectID_final[perm] = connectID_sorted
 
     # Create smld_connected with updated track_id
     # Use emitter's native precision, not SMLD's type parameter

@@ -9,11 +9,12 @@ SMLMFrameConnection performs frame-connection on 2D SMLM localization data: comb
 ## Development Commands
 
 ```bash
-# Run tests
+# Run tests (lab layout: Core = test/*.jl; Long = test/long/, slow, lab machine)
 julia --project=. -e 'using Pkg; Pkg.test()'
+GROUP=Everything julia --project=. -e 'using Pkg; Pkg.test()'
 
-# Run a single test file
-julia --project=. -e 'using Test, SMLMFrameConnection, SMLMData; include("test/test_helpers.jl"); include("test/test_frameconnect.jl")'
+# Run a single test file (each file loads its own packages and test_helpers.jl)
+julia --project=test test/test_frameconnect.jl
 
 # Build docs locally
 julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
@@ -23,7 +24,7 @@ julia --project=docs docs/make.jl
 julia --project=.
 ```
 
-Test files must `include("test/test_helpers.jl")` first since `runtests.jl` loads shared fixtures from it.
+`test/runtests.jl` is the lab's template runner (do not edit): each `test/*.jl` runs in its own module, so every test file starts with `using Test, SMLMFrameConnection, SMLMData` and `include("test_helpers.jl")`. Groups are declared in `test/test_groups.toml`.
 
 ## Architecture
 
@@ -31,20 +32,22 @@ Test files must `include("test/test_helpers.jl")` first since `runtests.jl` load
 
 `frameconnect()` in `frameconnect.jl` is the main entry point. It orchestrates a 5-stage pipeline:
 
-1. **Precluster** (`precluster.jl`): Spatiotemporal clustering using KDTree nearest-neighbor search. Groups localizations within `max_sigma_dist * mean(σ)` distance and `max_frame_gap` frames. Stores cluster assignments in emitter `track_id` fields.
+`frameconnect` first sorts a copy of the input by `(dataset, frame, x, y)` and runs every stage on it, so results do not depend on input order; track IDs are mapped back so `info.connected` keeps the caller's order. Input carrying `z` is refused (`_check_2d`).
+
+1. **Precluster** (`precluster.jl`): Spatiotemporal clustering using KDTree nearest-neighbor search. Links each localization to its `max_neighbors` nearest neighbors within `max_sigma_dist * (mean σ_i + mean σ_j)` among the localizations of its frame and the `max_frame_gap` frames before; preclusters are the connected components of those links (union-find). Stores cluster assignments in emitter `track_id` fields.
 
 2. **Estimate parameters** (`estimateparams.jl`, `estimatedensities.jl`): Estimates photophysics rates (k_on, k_off, k_bleach, p_miss) from precluster statistics. Uses Optim.jl NelderMead to fit cumulative localization counts. `estimatedensities.jl` estimates local emitter density per cluster using KDTree neighbor distances.
 
 3. **Connect via LAP** (`connectlocalizations.jl` -> `create_costmatrix.jl` -> `solveLAP.jl` -> `linkclusters.jl`): For each multi-emitter precluster, builds a 2Nx2N cost matrix with connection/birth/death blocks using negative log-likelihoods from spatial separation, observation probability, and photophysics. Solves with Hungarian.jl. `linkclusters.jl` updates `connectID` from LAP assignments.
 
-4. **Calibrate** (optional, `calibration.jl`): When `config.calibration` is set, analyzes frame-to-frame jitter within connected tracks to estimate motion variance (`σ_motion²`) and CRLB scale factor (`k²`). Applies corrected uncertainties `Σ_corrected = σ_motion² I + k² Σ_CRLB` before combination. Falls back gracefully (identity correction) if insufficient data or poor fit.
+4. **Calibrate** (optional, `calibration.jl`): When `config.calibration` is set, analyzes frame-to-frame jitter within connected tracks to estimate motion variance (`σ_motion²`) and CRLB scale factor (`k²`). The binned WLS fit is per axis `Var(Δx) = A + B·(σ_x1² + σ_x2²)`, so `A = 2σ_motion²` (stored as `CalibrationResult.A`) and `B = k²`. Pairs with chi² under the current fit above the chi²(2) 99.7% point are dropped, truncated bin means are divided by the truncation factor, bins are weighted by the fit-predicted variance, and the fit iterates to convergence (unbiased under the model; a fixed cut on the uncalibrated chi² biased k toward 1). Applies corrected uncertainties `Σ_corrected = σ_motion² I + k² Σ_CRLB` before combination. Falls back gracefully (identity correction) if insufficient data or poor fit.
 
 5. **Combine** (`combinelocalizations.jl`): MLE weighted mean using full 2x2 covariance (precision-weighted). Produces higher-precision output localizations. The `track_length` config (inclusive `(min, max)` range, `nothing`=disabled) drops tracks whose localization count falls outside the range here (offset-safe: `ncumulative` spans all localizations, a `keep` mask selects which clusters to emit) — `info.connected` retains all tracks, so filtering only affects the combined output. `info.n_filtered` reports the count dropped.
 
 ### Data Flow
 
 - Input/output: `BasicSMLD` from SMLMData.jl containing `Emitter2DFit` emitters
-- Internal representation: `organizeclusters()` converts to `Vector{Matrix{Float32}}` where each matrix is a cluster with columns: `[x, y, σ_x, σ_y, σ_xy, frame, dataset, connectID, sortindex]`
+- Internal representation: `organizeclusters()` converts to `Vector{Matrix{Float64}}` (Float64 so the integer columns stay exact above 2^24) where each matrix is a cluster, rows sorted by frame, with columns: `[x, y, σ_x, σ_y, σ_xy, frame, dataset, connectID, sortindex]`
 - `ParamStruct`: mutable struct accumulating estimated parameters through the pipeline
 - Return: tuple `(combined::BasicSMLD, info::FrameConnectInfo)`
 

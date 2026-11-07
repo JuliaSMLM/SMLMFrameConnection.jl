@@ -33,104 +33,73 @@ function precluster(smld::BasicSMLD{T,E},
     # one localization and otherwise throw on an empty collection.
     n_emitters == 0 && return smld
 
+    # Work in (dataset, frame) order (stable), so the clusters do not depend on the
+    # order of the input.
     framenum = [e.frame for e in emitters]
     datasetnum = [e.dataset for e in emitters]
-    x = [e.x for e in emitters]
-    y = [e.y for e in emitters]
-    σ_x = [e.σ_x for e in emitters]
-    σ_y = [e.σ_y for e in emitters]
-
-    # Sort w.r.t. datasetnum
-    sortindicesDS = sortperm(datasetnum)
-    framenum = framenum[sortindicesDS]
-    datasetnum = datasetnum[sortindicesDS]
-    xy = transpose([x y])
-    xy = xy[:, sortindicesDS]
-    σ_x = σ_x[sortindicesDS]
-    σ_y = σ_y[sortindicesDS]
-    mean_se = Statistics.mean([σ_x σ_y]; dims = 2)
+    order = sortperm(collect(zip(datasetnum, framenum)))
+    fr = framenum[order]
+    ds = datasetnum[order]
+    ET = typeof(first(emitters).x)
+    xy = Matrix{ET}(undef, 2, n_emitters)
+    mean_se = Vector{ET}(undef, n_emitters)
+    for (k, i) in enumerate(order)
+        e = emitters[i]
+        xy[1, k] = e.x
+        xy[2, k] = e.y
+        mean_se[k] = (e.σ_x + e.σ_y) / 2
+    end
 
     # Isolate some parameters from params.
     max_frame_gap = params.max_frame_gap
     max_sigma_dist = params.max_sigma_dist
     max_neighbors = params.max_neighbors
 
-    # Initialize a connectID array, with each localization being considered
-    # a unique cluster.
-    nlocalizations = length(framenum)
-    connectID = collect(1:nlocalizations)
-
-    # Loop through frames and add localizations to clusters.
-    nperdataset = StatsBase.counts(datasetnum)
-    nperdataset = nperdataset[nperdataset.!=0]
-    ncumulativeDS = [0; cumsum(nperdataset)]
-    maxID = nlocalizations
-    for nn = 1:length(unique(datasetnum))
-        # Isolate some arrays for the nn-th dataset and sort w.r.t. their
-        # framenum.
-        currentindDS = (1:nperdataset[nn]) .+ ncumulativeDS[nn]
-        sortindicesFN = sortperm(framenum[currentindDS])
-        currentindDS = currentindDS[sortindicesFN]
-        framenumCDS = framenum[currentindDS]
-        xyCDS = xy[:, currentindDS]
-        mean_seCDS = mean_se[currentindDS]
-        connectIDCDS = connectID[currentindDS]
-
-        # Loop through frames and add localizations to clusters.
-        nperframe = counts(framenumCDS)
-        nperframe = nperframe[nperframe.!=0]
-        ncumulativeFN = [0; cumsum(nperframe)]
-        clusterinds = [[ind] for ind in 1:nperdataset[nn]]
-        frames = unique(framenumCDS)
-        for ff = 1:length(frames)
-            # Determine which localizations should be considered for
-            # clustering.
-            currentindFN = (1:nperframe[ff]) .+ ncumulativeFN[ff]
-            candidateind = findall((framenumCDS .>= (frames[ff] .- max_frame_gap)) .&
-                                   (framenumCDS .<= frames[ff]))
-            if length(candidateind) < 2
-                maxID += 1
-                connectIDCDS[currentindFN] = (1:nperframe[ff]) .+ maxID
-                maxID += nperframe[ff]
-                continue
+    # Link each localization to those of its `max_neighbors` nearest neighbors, among
+    # the localizations of its own frame and the `max_frame_gap` frames before it, that
+    # lie within the distance threshold. Clusters are the connected components of
+    # these links (union-find; each root is the smallest index in its component).
+    parent = collect(1:n_emitters)
+    lo = 1
+    while lo <= n_emitters
+        hi = lo
+        while hi < n_emitters && ds[hi+1] == ds[lo]
+            hi += 1
+        end
+        frames_ds = view(fr, lo:hi)
+        a = lo
+        while a <= hi
+            b = a
+            while b < hi && fr[b+1] == fr[a]
+                b += 1
             end
-
-            # Find the nearest-neighbor to the current localizations
-            # which is a candidate for clustering.
-            kdtree = NearestNeighbors.KDTree(xyCDS[:, candidateind])
-            nnindices, nndist = NearestNeighbors.knn(kdtree, xyCDS[:, currentindFN],
-                min(max_neighbors + 1, length(candidateind)), true)
-
-            # Assign localizations to clusters based on `nndist`.
-            for ii in 1:nperframe[ff]
-                # Determine which candidates meet our distance cutoff.
-                se_sum = mean_seCDS[currentindFN[ii]] .+
-                         mean_seCDS[candidateind[nnindices[ii]]]
-                validnninds = nnindices[ii][nndist[ii].<=(max_sigma_dist*se_sum)]
-
-                # Update connectIDCDS to reflect the new clusters.
-                updateinds = unique([currentindFN[ii]
-                    candidateind[validnninds]
-                    findall(connectIDCDS .== connectIDCDS[currentindFN[ii]])
-                    clusterinds[candidateind[validnninds]][1]])
-                connectIDCDS[updateinds] .= minimum(connectIDCDS[updateinds])
-
-                # Keep track of which indices have been associated.
-                for jj in updateinds
-                    clusterinds[jj] = [clusterinds[jj][1]; updateinds]
+            c = lo - 1 + searchsortedfirst(frames_ds, fr[a] - max_frame_gap)
+            ncand = b - c + 1
+            if ncand >= 2
+                kdtree = NearestNeighbors.KDTree(xy[:, c:b])
+                nnindices, nndist = NearestNeighbors.knn(kdtree, xy[:, a:b],
+                    min(max_neighbors + 1, ncand), true)
+                for (ii, i) in enumerate(a:b)
+                    for (jj, d) in zip(nnindices[ii], nndist[ii])
+                        j = c - 1 + jj
+                        if d <= max_sigma_dist * (mean_se[i] + mean_se[j])
+                            _uf_union!(parent, i, j)
+                        end
+                    end
                 end
             end
+            a = b + 1
         end
-        connectID[currentindDS] = deepcopy(connectIDCDS)
+        lo = hi + 1
     end
 
-    # Compress connectID to range from 1:NClusters
-    connectID_compressed = Vector{Int}(undef, nlocalizations)
-    connectID_compressed[sortindicesDS] = compress_connectID(connectID)
+    # Label by component root, compress to 1:NClusters, and return to input order.
+    connectID = [_uf_find!(parent, k) for k in 1:n_emitters]
+    connectID_compressed = Vector{Int}(undef, n_emitters)
+    connectID_compressed[order] = compress_connectID(connectID)
 
     # Create new emitters with track_id set
     # Use emitter's native precision, not SMLD's type parameter
-    ET = typeof(first(emitters).x)
     new_emitters = Vector{SMLMData.Emitter2DFit{ET}}(undef, n_emitters)
     for i in 1:n_emitters
         e = emitters[i]
@@ -144,4 +113,25 @@ function precluster(smld::BasicSMLD{T,E},
                                    smld.n_datasets, copy(smld.metadata))
 
     return smld_preclustered
+end
+
+# Union-find with path halving; the root of a component is its smallest index.
+function _uf_find!(parent::Vector{Int}, i::Int)
+    while parent[i] != i
+        parent[i] = parent[parent[i]]
+        i = parent[i]
+    end
+    return i
+end
+
+function _uf_union!(parent::Vector{Int}, i::Int, j::Int)
+    ri = _uf_find!(parent, i)
+    rj = _uf_find!(parent, j)
+    ri == rj && return
+    if ri < rj
+        parent[rj] = ri
+    else
+        parent[ri] = rj
+    end
+    return
 end

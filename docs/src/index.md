@@ -38,6 +38,11 @@ Input `BasicSMLD` must contain `Emitter2DFit` emitters with:
 - `photons`, `bg`: Photometry (summed in output)
 - `dataset`: Dataset identifier (default: 1)
 
+Localizations may come in any order (for example SMLMSim's output, grouped by emitter):
+`frameconnect` works on a copy sorted by dataset and frame, and `info.connected` keeps the
+caller's order. Localizations that carry `z` (3D) are refused with an `ArgumentError`;
+frame connection is 2D only.
+
 ## Algorithm Overview
 
 1. **Preclustering**: Groups spatially and temporally adjacent localizations into candidate clusters

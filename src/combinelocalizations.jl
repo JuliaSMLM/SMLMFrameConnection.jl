@@ -21,6 +21,7 @@ sticky docking strands in dense DNA-PAINT data).
 """
 function combinelocalizations(smld::BasicSMLD{T,E};
     track_length::Union{Tuple{Float64,Float64},Nothing}=nothing) where {T, E<:SMLMData.AbstractEmitter}
+    _check_2d(smld, "combinelocalizations")
     # Extract arrays from emitters
     emitters = smld.emitters
     # Nothing to combine: return the (empty) input unchanged. The reductions
