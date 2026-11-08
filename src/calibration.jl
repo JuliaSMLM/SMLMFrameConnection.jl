@@ -375,17 +375,20 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     det_nm4 = det_vec .* 1e12
     dx_nm = dx_vec .* 1e3
     dy_nm = dy_vec .* 1e3
-    dx2_nm2 = dx_vec .^ 2 .* 1e6
-    dy2_nm2 = dy_vec .^ 2 .* 1e6
-    reported_all = (vx_nm2 .+ vy_nm2) ./ 2
-    observed_all = ((dx2_nm2 .+ dy2_nm2) ./ 2) ./ _CAL_TRUNC_FACTOR
+    # Reported value per pair and its bin, in the same arithmetic as before this
+    # calibration was reworked: equal values must land in one bin, and a value on a bin
+    # edge in the same bin as before (another order of operations can round two equal
+    # sums apart, or across an edge, and drop a bin).
+    reported_all = ((var_x_vec .+ var_y_vec) ./ 2) .* 1e6
+    observed_all = (((dx_vec .^ 2 .+ dy_vec .^ 2) ./ 2) .* 1e6) ./ _CAL_TRUNC_FACTOR
 
-    # Equal-width bin edges over all pairs, fixed across iterations.
+    # Equal-width bins over all pairs, fixed across iterations: bin b holds
+    # x_min + (b-1)·w ≤ r < x_min + b·w, the last bin everything above its lower edge.
     x_min, x_max = extrema(reported_all)
     n_bins = 20
     bin_width = (x_max - x_min) / n_bins
-    bin_of = [bin_width > 0 ? clamp(floor(Int, (r - x_min) / bin_width) + 1, 1, n_bins) : 1
-              for r in reported_all]
+    edges = [x_min + b * bin_width for b in 1:n_bins-1]
+    bin_of = [bin_width > 0 ? searchsortedlast(edges, r) + 1 : 1 for r in reported_all]
 
     # Start from the median: with A = 0, chi²/B is chi²(2), whose median is 2·log(2).
     z_raw = _pair_chi2.(dx_nm, dy_nm, vx_nm2, vy_nm2, cxy_nm2, det_nm4)

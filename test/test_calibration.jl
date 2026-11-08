@@ -501,6 +501,30 @@ end
         @test r.n_pairs == 80
     end
 
+    @testset "equal reported variances share a bin" begin
+        # 25² + 60² = 33² + 56²: five pairs with mathematically equal reported variance.
+        # Scaling each axis to nm² before averaging rounded them apart across a bin
+        # edge (2 and 3 pairs, both bins under 5 dropped), and calibration fell back with
+        # 95 pairs; 93c75be applied it from 100.
+        q, h = 220002 / 2^30, 0.018372090982907863
+        rows = vcat([(1/128, 1/128, a) for a in range(0.5, 1.5, length = 45)],
+                    [(h, h, a) for a in range(0.5, 1.5, length = 50)],
+                    [(25q, 60q, a) for a in (0.8, 0.9)],
+                    [(33q, 56q, a) for a in (1.0, 1.1, 1.2)])
+        em = Emitter2DFit{Float64}[]
+        for (t, (sx, sy, a)) in enumerate(rows)
+            x0, y0 = 5.0 + 2 * mod(t - 1, 20), 5.0 + 2 * div(t - 1, 20)
+            push!(em, Emitter2DFit{Float64}(x0, y0, 1000.0, 10.0, sx, sy, 0.0, 30.0, 3.0,
+                                            1, 1, t, 0))
+            push!(em, Emitter2DFit{Float64}(x0 + sqrt(2a) * sx, y0 + sqrt(2a) * sy, 1000.0,
+                                            10.0, sx, sy, 0.0, 30.0, 3.0, 2, 1, t, 0))
+        end
+        r = SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
+                                                    CalibrationConfig())
+        @test r.calibration_applied
+        @test r.n_pairs == 100
+    end
+
     @testset "the one-bin standard error matches the scatter across seeds" begin
         # One reported precision (one bin), correlated CRLB (ρ = 0.99), tracks of 3 frames
         # (consecutive pairs share a localization). The standard error assumed isotropic,
