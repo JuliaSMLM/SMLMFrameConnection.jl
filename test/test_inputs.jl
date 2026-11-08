@@ -177,6 +177,15 @@ using Random
         q = SMLMFrameConnection._precision_mean([1.0, 1e16], [0.0, 0.0], [1.0, 1e16],
                                                 [2.0, 0.5], zeros(2), 1:2)
         @test q[1] == 1.0 && q[2] == 0.0
+        # Identical localizations: the combined center is exactly their position. A sum of
+        # xᵢ/n rounded six at x = 25 to 25.000000000000004; the density estimate read that
+        # as a separation from the other group's center (density 0.75 -> 3e28 per μm²)
+        # and frameconnect returned 9 tracks instead of 2.
+        em = [Emitter2DFit{Float64}(25.0, 25.0, 1000.0, 10.0, 0.01, 0.02, 0.0, 30.0, 3.0,
+                                    f, 1, 0, f) for f in vcat(1:3, 20:25)]
+        _, info = frameconnect(make_test_smld(em; n_frames = 25))
+        @test info.n_tracks == 2
+        @test all(<(1.0), info.initial_density)
         # Identical covariances at coordinates near the Float64 limit: the mean is finite.
         r = SMLMFrameConnection._precision_mean([0.0, 1e308, 1e308], fill(5.0, 3),
                                                 fill(1e4, 3), fill(1e4, 3), zeros(3), 1:3)
