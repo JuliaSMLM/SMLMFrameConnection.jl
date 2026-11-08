@@ -44,7 +44,7 @@ function generate_dataset(dataset_id::Int;
 
     fluor = GenericFluor(; photons=photons, k_off=k_off, k_on=k_on)
 
-    params = StaticSMLMParams(
+    params = StaticSMLMConfig(
         density = density,
         σ_psf = σ_psf,
         minphotons = 100,
@@ -55,7 +55,7 @@ function generate_dataset(dataset_id::Int;
 
     camera = IdealCamera(1:fov_pixels, 1:fov_pixels, pixel_size)
 
-    _, _, smld_noisy = simulate(params;
+    smld_noisy, _ = simulate(params;
         molecule = fluor,
         camera = camera,
         pattern = Nmer2D(n=1, d=0.0)
@@ -63,7 +63,7 @@ function generate_dataset(dataset_id::Int;
 
     # Update dataset field to match dataset_id
     new_emitters = [Emitter2DFit{Float64}(
-        e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg,
+        e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy, e.σ_photons, e.σ_bg,
         e.frame, dataset_id, 0, e.id  # Clear track_id, set dataset
     ) for e in smld_noisy.emitters]
 
