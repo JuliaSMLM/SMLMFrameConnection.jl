@@ -164,6 +164,24 @@ using Random
         @test out.σ_x == 1f-24 && posdef(out)
     end
 
+    @testset "the precision-weighted mean keeps every position's information" begin
+        # Positions entered relative to the first localization, which lost a far, heavy
+        # one: (1e16, σ 1e16) and (1, σ 1) gave (0, 0) in that order and (1, 1) reversed.
+        pm(idx) = SMLMFrameConnection._precision_mean([1e16, 1.0], [1e16, 1.0], [1e16, 1.0],
+                                                      [1e16, 1.0], zeros(2), idx)[1:2]
+        @test pm(1:2) == (1.0, 1.0)
+        @test pm([2, 1]) == (1.0, 1.0)
+        # Identical covariances, nearly singular: the mean is the arithmetic mean (the
+        # precision form returned the second position).
+        e(x, y, f) = Emitter2DFit{Float64}(x, y, 1000.0, 10.0, 0.03, 0.02, 0.0006, 30.0, 3.0,
+                                           f, 1, 1, 0)
+        o = combinelocalizations(make_test_smld([e(5.0, 5.0, 1), e(5.003, 5.002, 2)];
+                                                n_frames = 2)).emitters[1]
+        @test o.x ≈ 5.0015 atol = 1e-12
+        @test o.y ≈ 5.001 atol = 1e-12
+        @test o.σ_x ≈ 0.03 / sqrt(2) rtol = 1e-14
+    end
+
     @testset "one zero-area precluster returns" begin
         # Two localizations of one molecule at exactly one position: the precluster's
         # bounding box has zero area. This used to give an infinite density, a NaN

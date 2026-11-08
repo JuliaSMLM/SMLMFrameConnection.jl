@@ -55,6 +55,38 @@ end
 _adjacent_obs_corr(s11, s22, s12, trCa2, trCb2) =
     (s11^2 + s22^2 + 2 * s12^2) / sqrt(trCa2 * trCb2)
 
+# Pairs kept by the cut: chi² under the model covariance A·I + B·(Σ₁ + Σ₂), whose
+# determinant A² + A·B·(vx + vy) + B²·det(Σ₁ + Σ₂) is a sum of non-negative terms (A ≥ 0).
+function _cut_keep(dx, dy, vx, vy, cxy, dS, A::Float64, B::Float64)
+    keep = falses(length(dx))
+    @inbounds for i in eachindex(dx)
+        detC = A^2 + A * B * (vx[i] + vy[i]) + B^2 * dS[i]
+        keep[i] = _pair_chi2(dx[i], dy[i], A + B * vx[i], A + B * vy[i], B * cxy[i], detC) <=
+                  _CAL_CHI2_CUT
+    end
+    return keep
+end
+
+# Model variance of the mean of the pairs `m` (ascending) under the pair covariances
+# A·I + B·(Σ₁ + Σ₂) (vx, vy, cxy the sums of the reported ones): each pair's variance
+# (_pair_obs_var) plus the covariance of consecutive pairs i, i+1 both in `m` that share a
+# localization (`adj[i]`), whose CRLB covariance is (shared[1][i], shared[2][i],
+# shared[3][i]) and model covariance (A/2)·I + B·Σ.
+function _model_var_of_mean(m, vx, vy, cxy, A, B, adj, shared)
+    v(i) = max(_pair_obs_var(A + B * vx[i], A + B * vy[i], B * cxy[i]), 0.0)
+    trC2(i) = (A + B * vx[i])^2 + (A + B * vy[i])^2 + 2 * (B * cxy[i])^2
+    s = sum(v, m)
+    if adj !== nothing
+        for k in 1:length(m)-1
+            i = m[k]
+            (m[k+1] == i + 1 && adj[i]) || continue
+            s11, s22, s12 = A / 2 + B * shared[1][i], A / 2 + B * shared[2][i], B * shared[3][i]
+            s += 2 * _adjacent_obs_corr(s11, s22, s12, trC2(i), trC2(i + 1)) * sqrt(v(i) * v(i + 1))
+        end
+    end
+    return s / length(m)^2
+end
+
 # Weighted least squares of binned `observed` on binned `reported` over the pairs in
 # `keep`; `bin_of[i]` is pair i's bin. Bins with fewer than 5 pairs are skipped. Each bin
 # mean is weighted by n / v², with v = A + B * center the variance the current fit (A, B)
@@ -64,21 +96,19 @@ _adjacent_obs_corr(s11, s22, s12, trCa2, trCb2) =
 # `fixA` or `fixB` holds that parameter at the given value and fits the other alone.
 # The two-parameter fit needs 3 bins (one beyond its parameters, for a standard error); a
 # one-parameter fit is defined from 1 bin, and with a single bin its standard error comes
-# from the model variance of the bin mean instead of the scatter about the fit: each
-# pair's variance from its own covariance shape (`pair_var`, see _pair_obs_var), plus the
-# covariance of consecutive pairs of a track that share a localization (`next_cov[i]`
-# between pairs i and i+1, 0 when they share none).
+# from the model variance of the bin mean instead of the scatter about the fit,
+# `one_bin_var(members)` (see _model_var_of_mean), called only in that case.
 # Returns a NamedTuple (with `n_used`, the pairs in the bins the fit used), or a String
 # naming why no fit was possible.
 function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
                      fixA::Union{Nothing,Float64} = nothing,
                      fixB::Union{Nothing,Float64} = nothing,
-                     pair_var = nothing, next_cov = nothing)
+                     one_bin_var = nothing)
     bin_centers = Float64[]
     bin_observed = Float64[]
     bin_var = Float64[]
-    bin_model_var = Float64[]   # model variance of the bin mean, from pair_var
     n_per_bin = Int[]
+    valid_members = Vector{Int}[]
     members = [Int[] for _ in 1:n_bins]
     for i in eachindex(reported)
         keep[i] && push!(members[bin_of[i]], i)
@@ -88,18 +118,8 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
             push!(bin_centers, mean(@view reported[m]))
             push!(bin_observed, mean(@view observed[m]))
             push!(bin_var, var(@view observed[m]))
-            mv = NaN
-            if pair_var !== nothing
-                s = sum(@view pair_var[m])
-                if next_cov !== nothing   # m is ascending: i + 1 in m iff it follows i
-                    for k in 1:length(m)-1
-                        m[k+1] == m[k] + 1 && (s += 2 * next_cov[m[k]])
-                    end
-                end
-                mv = s / length(m)^2
-            end
-            push!(bin_model_var, mv)
             push!(n_per_bin, length(m))
+            push!(valid_members, m)
         end
     end
 
@@ -107,6 +127,9 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
     n_valid_bins = length(bin_centers)
     min_bins = npar == 2 ? 3 : 1
     n_valid_bins < min_bins && return "Too few valid bins ($n_valid_bins < $min_bins)"
+    # Model variance of the single bin's mean, from the pairs' covariances (NaN if none).
+    bin_model_var = n_valid_bins == 1 && one_bin_var !== nothing ?
+                    [one_bin_var(valid_members[1])] : [NaN]
 
     # WLS on binned data: weight = 1/var_of_bin_mean (model variance), normalized
     # A negative intercept can make the prediction small or negative in the lowest bins;
@@ -195,25 +218,12 @@ function _iterate_calibration(reported, observed, bin_of, n_bins, dx, dy, vx, vy
         # -B·λ_min(Σ), and every such pair would be cut. Its determinant,
         # A² + A·B·(vx + vy) + B²·det(Σ₁ + Σ₂), is a sum of non-negative terms.
         Ac = max(A, 0.0)
-        cxx, cyy, cc = Ac .+ B .* vx, Ac .+ B .* vy, B .* cxy
-        detC = Ac^2 .+ Ac .* B .* (vx .+ vy) .+ B^2 .* dS
-        keep = _pair_chi2.(dx, dy, cxx, cyy, cc, detC) .<= _CAL_CHI2_CUT
-        pv = nc = nothing
-        if B > 0
-            pv = _pair_obs_var.(cxx, cyy, cc)
-            if adj !== nothing
-                trC2 = cxx .^ 2 .+ cyy .^ 2 .+ 2 .* cc .^ 2
-                nc = zeros(length(pv))
-                for i in findall(adj)
-                    s11, s22, s12 = Ac / 2 + B * shared[1][i], Ac / 2 + B * shared[2][i],
-                                    B * shared[3][i]
-                    nc[i] = _adjacent_obs_corr(s11, s22, s12, trC2[i], trC2[i+1]) *
-                            sqrt(max(pv[i], 0.0) * max(pv[i+1], 0.0))
-                end
-            end
-        end
+        keep = _cut_keep(dx, dy, vx, vy, cxy, dS, Ac, B)
+        onebin = B > 0 ? let Ac = Ac, B = B
+            m -> _model_var_of_mean(m, vx, vy, cxy, Ac, B, adj, shared)
+        end : nothing
         fit = _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
-                          fixA = fixA, fixB = fixB, pair_var = pv, next_cov = nc)
+                          fixA = fixA, fixB = fixB, one_bin_var = onebin)
         fit isa String && break
         done = abs(fit.B - B) <= 1e-6 * max(1.0, abs(B)) &&
                abs(fit.A - A) <= 1e-6 * max(1.0, mean(reported))

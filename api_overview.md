@@ -110,7 +110,7 @@ Input `BasicSMLD` must contain emitters with position uncertainties.
 - `x`, `y`: Position (microns), finite
 - `σ_x`, `σ_y`: Position uncertainties (microns), finite and > 0
 - `σ_xy`: Position covariance (μm²); positive definite covariance, `|σ_xy| < σ_x σ_y`
-- `frame`: Frame number (1-based); for `frameconnect`, `smld.n_frames` ≥ largest frame, or 0 (unknown)
+- `frame`: Frame number; for `frameconnect`, ≥ 1 and `smld.n_frames` ≥ largest frame, or 0 (unknown)
 
 **Optional fields:**
 - `photons`, `σ_photons`: Photon count (summed in output)
@@ -118,8 +118,9 @@ Input `BasicSMLD` must contain emitters with position uncertainties.
 - `dataset`: Dataset identifier (default: 1)
 - `track_id`: Set to 0 for input (populated by algorithm)
 
-Input that breaks these is refused with an `ArgumentError` naming the localization and
-field. 2D only: emitters that carry `z` are refused. Input order does not matter:
+`frameconnect` refuses input that breaks these with an `ArgumentError` naming the
+localization and field; `combinelocalizations` checks the same except the frame rules.
+2D only: emitters that carry `z` are refused. Input order does not matter:
 `frameconnect` sorts a copy by every field, and `info.connected` keeps the caller's order.
 
 ## Calibration (optional)

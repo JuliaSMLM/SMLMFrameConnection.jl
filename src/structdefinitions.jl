@@ -237,14 +237,31 @@ end
 # Precision-weighted mean of the localizations `idx` with full 2×2 covariances:
 # Σ = (Σᵢ Σᵢ⁻¹)⁻¹, μ = Σ·Σᵢ Σᵢ⁻¹ xᵢ, in Float64. The determinant of the summed precision
 # is carried along accurately (_det_add) instead of recomputed from the sums, where it
-# cancels for nearly singular covariances. Positions enter relative to the first
-# localization: with a nearly singular precision, Σᵢ Σᵢ⁻¹ xᵢ cancels, and its error then
-# scales with the offsets (about σ) instead of the absolute position.
+# cancels for nearly singular covariances. Positions enter relative to the localization
+# with the largest precision weight (first in `idx` on a tie): with a nearly singular
+# precision, Σᵢ Σᵢ⁻¹ xᵢ cancels, and its error then scales with the offsets (about σ)
+# instead of the absolute position, while the dominant term stays exact. When every
+# covariance in the group is the same, the result is exact in closed form, the
+# arithmetic mean and Σ/n, however close to singular Σ is.
 # Returns (μx, μy, Σ11, Σ22, Σ12).
 function _precision_mean(x, y, σx, σy, σxy, idx)
+    i1 = first(idx)
+    if all(i -> σx[i] == σx[i1] && σy[i] == σy[i1] && σxy[i] == σxy[i1], idx)
+        n = length(idx)
+        x1, y1 = Float64(x[i1]), Float64(y[i1])
+        sx = sum(Float64(x[i]) - x1 for i in idx)
+        sy = sum(Float64(y[i]) - y1 for i in idx)
+        return x1 + sx / n, y1 + sy / n,
+               Float64(σx[i1])^2 / n, Float64(σy[i1])^2 / n, Float64(σxy[i1]) / n
+    end
+    ia, wa = i1, -Inf
+    for i in idx
+        w = (Float64(σx[i])^2 + Float64(σy[i])^2) / _cov_det(σx[i], σy[i], σxy[i])
+        w > wa && ((ia, wa) = (i, w))
+    end
     S11 = S22 = S12 = det_S = 0.0
     m1 = m2 = 0.0
-    x0, y0 = Float64(x[first(idx)]), Float64(y[first(idx)])
+    x0, y0 = Float64(x[ia]), Float64(y[ia])
     for (j, i) in enumerate(idx)
         det_i = _cov_det(σx[i], σy[i], σxy[i])   # > 0: the entry check holds
         # Precision matrix P = [σ_y² -σ_xy; -σ_xy σ_x²] / det, with det(P) = 1/det
