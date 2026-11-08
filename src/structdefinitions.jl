@@ -10,7 +10,8 @@ a motion variance (`σ_motion²`) and CRLB scale factor (`k²`), then applies co
 uncertainties before track combination: `Σ_corrected = σ_motion² I + k² Σ_CRLB`.
 
 # Fields
-- `clamp_k_to_one::Bool=true`: Clamp k_scale to minimum of 1.0 (CRLB is a lower bound)
+- `clamp_k_to_one::Bool=true`: Hold k_scale ≥ 1.0 (CRLB is a lower bound); when the fit gives
+  k < 1, the motion term is refit with k = 1
 - `filter_high_chi2::Bool=false`: Filter tracks with high chi² pairs before fitting. The chi² here
   uses the uncalibrated CRLB, so this filter removes the tracks that show a too-small CRLB and
   pulls `k_scale` toward 1; the fit itself already leaves out mismatched pairs (see
@@ -41,9 +42,11 @@ iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when th
 
 # Fields
 - `sigma_motion_nm::Float64`: Estimated per-localization motion std dev in nm (√(A/2) × 1000)
-- `k_scale::Float64`: CRLB scale factor (√B, or clamped √B if clamp_k_to_one)
-- `A::Float64`: Fit intercept (pair-difference variance 2σ_motion², in μm²)
-- `B::Float64`: Fit slope (k²)
+- `k_scale::Float64`: CRLB scale factor (√B)
+- `A::Float64`: Fit intercept (pair-difference variance 2σ_motion², in μm²), ≥ 0
+- `B::Float64`: Fit slope (k²), ≥ 1 with `clamp_k_to_one`. When a bound binds (A < 0, or
+  B < 1 under the clamp) the other parameter is refit with the bound held, so the stored
+  line `A + B * x` is the calibration applied
 - `A_sigma::Float64`: Standard error of A
 - `B_sigma::Float64`: Standard error of B
 - `r_squared::Float64`: R² of the WLS fit

@@ -22,8 +22,11 @@ const _CAL_MIN_SLOPE_SIGNIF = 3.0
 # predicts: a pair's (dx² + dy²)/2 is v·chi²(2)/2, whose variance is v². Weighting by a
 # bin's own sample variance instead favors bins whose mean came out low (for chi²-like
 # values the sample mean and variance rise together), which biased k low on small data.
+# `fixA` or `fixB` holds that parameter at the given value and fits the other alone.
 # Returns a NamedTuple, or a String naming why no fit was possible.
-function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B)
+function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
+                     fixA::Union{Nothing,Float64} = nothing,
+                     fixB::Union{Nothing,Float64} = nothing)
     bin_centers = Float64[]
     bin_observed = Float64[]
     bin_var = Float64[]
@@ -58,27 +61,62 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B)
     sum(weights) ≈ 0 && return "All bin weights are zero"
     weights = weights ./ sum(weights) .* n_valid_bins
 
-    X = hcat(ones(n_valid_bins), bin_centers)
-    W = Diagonal(weights)
-    XtWX = X' * W * X
-    XtWy = X' * W * bin_observed
-    det_XtWX = XtWX[1,1] * XtWX[2,2] - XtWX[1,2]^2
-    abs(det_XtWX) < eps() && return "Singular WLS matrix"
-
-    coeffs = XtWX \ XtWy
-    y_pred = X * coeffs
-    residuals = bin_observed .- y_pred
-    ss_res = sum(weights .* residuals .^ 2)
     ss_tot = sum(weights .* (bin_observed .- mean(bin_observed)) .^ 2)
+    if fixA === nothing && fixB === nothing
+        X = hcat(ones(n_valid_bins), bin_centers)
+        W = Diagonal(weights)
+        XtWX = X' * W * X
+        XtWy = X' * W * bin_observed
+        det_XtWX = XtWX[1,1] * XtWX[2,2] - XtWX[1,2]^2
+        abs(det_XtWX) < eps() && return "Singular WLS matrix"
+        coeffs = XtWX \ XtWy
+        Afit, Bfit = coeffs[1], coeffs[2]
+        ss_res = sum(weights .* (bin_observed .- (Afit .+ Bfit .* bin_centers)) .^ 2)
+        var_coeffs = ss_res / max(1, n_valid_bins - 2) * inv(XtWX)
+        A_sigma = sqrt(max(0.0, var_coeffs[1, 1]))
+        B_sigma = sqrt(max(0.0, var_coeffs[2, 2]))
+    elseif fixA !== nothing
+        Afit = fixA
+        swcc = sum(weights .* bin_centers .^ 2)
+        Bfit = sum(weights .* bin_centers .* (bin_observed .- Afit)) / swcc
+        ss_res = sum(weights .* (bin_observed .- (Afit .+ Bfit .* bin_centers)) .^ 2)
+        A_sigma = 0.0
+        B_sigma = sqrt(max(0.0, ss_res / max(1, n_valid_bins - 1) / swcc))
+    else
+        Bfit = fixB
+        Afit = sum(weights .* (bin_observed .- Bfit .* bin_centers)) / sum(weights)
+        ss_res = sum(weights .* (bin_observed .- (Afit .+ Bfit .* bin_centers)) .^ 2)
+        A_sigma = sqrt(max(0.0, ss_res / max(1, n_valid_bins - 1) / sum(weights)))
+        B_sigma = 0.0
+    end
     r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : NaN
-    mse = ss_res / max(1, n_valid_bins - 2)
-    var_coeffs = mse * inv(XtWX)
 
-    return (A = coeffs[1], B = coeffs[2],
-            A_sigma = sqrt(max(0.0, var_coeffs[1, 1])),
-            B_sigma = sqrt(max(0.0, var_coeffs[2, 2])),
+    return (A = Afit, B = Bfit, A_sigma = A_sigma, B_sigma = B_sigma,
             r_squared = r_squared, bin_centers = bin_centers,
             bin_observed = bin_observed, n_per_bin = n_per_bin)
+end
+
+# Iterate cut, truncation-corrected binned fit, and weights from (A, B) to a fixed
+# point; `fixA`/`fixB` as in `_binned_wls`. Returns (fit, keep, converged).
+function _iterate_calibration(reported, observed, bin_of, n_bins, vx, vy, dx2, dy2, A, B;
+                              fixA = nothing, fixB = nothing)
+    fit = "No calibration fit was attempted"
+    keep = trues(length(reported))
+    converged = false
+    for _ in 1:_CAL_MAX_ITER
+        sx = max.(A .+ B .* vx, eps())
+        sy = max.(A .+ B .* vy, eps())
+        keep = (dx2 ./ sx .+ dy2 ./ sy) .<= _CAL_CHI2_CUT
+        fit = _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
+                          fixA = fixA, fixB = fixB)
+        fit isa String && break
+        done = abs(fit.B - B) <= 1e-6 * max(1.0, abs(B)) &&
+               abs(fit.A - A) <= 1e-6 * max(1.0, mean(reported))
+        A, B = fit.A, fit.B
+        converged = done
+        done && break
+    end
+    return fit, keep, converged
 end
 
 """
@@ -237,58 +275,50 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     A = 0.0
     B = median(z_raw) / (2 * log(2))
 
-    fit = "No calibration fit was attempted"
-    keep = trues(length(dx_vec))
-    converged = false
-    for _ in 1:_CAL_MAX_ITER
-        sx = max.(A .+ B .* vx_nm2, eps())
-        sy = max.(A .+ B .* vy_nm2, eps())
-        keep = (dx2_nm2 ./ sx .+ dy2_nm2 ./ sy) .<= _CAL_CHI2_CUT
-        fit = _binned_wls(reported_all, observed_all, bin_of, keep, n_bins, A, B)
-        fit isa String && break
-        done = abs(fit.B - B) <= 1e-6 * max(1.0, abs(B)) &&
-               abs(fit.A - A) <= 1e-6 * max(1.0, mean(reported_all))
-        A, B = fit.A, fit.B
-        converged = done
-        done && break
-    end
-    n_pairs = count(keep)
+    iter(A0, B0; kw...) = _iterate_calibration(reported_all, observed_all, bin_of, n_bins,
+                                               vx_nm2, vy_nm2, dx2_nm2, dy2_nm2, A0, B0; kw...)
+    fallback(msg, n) = _fallback_result(mean_chi2, n, n_tracks_used, frame_shifts, msg;
+                                        n_tracks_filtered=n_tracks_filtered)
 
-    if n_pairs < 100
-        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                "Too few pairs after chi² pair filtering ($n_pairs < 100)";
-                                n_tracks_filtered=n_tracks_filtered)
-    end
-    if fit isa String
-        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts, fit;
-                                n_tracks_filtered=n_tracks_filtered)
-    end
+    fit, keep, converged = iter(A, B)
+    fit isa String && return fallback(fit, count(keep))
+    count(keep) < 100 &&
+        return fallback("Too few pairs after chi² pair filtering ($(count(keep)) < 100)", count(keep))
+    fit.r_squared < 0.1 &&
+        return fallback("Poor fit quality (R² = $(round(fit.r_squared, digits=3)))", count(keep))
 
-    (; bin_centers, bin_observed, n_per_bin, r_squared, A_sigma, B_sigma) = fit
-    if r_squared < 0.1
-        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                "Poor fit quality (R² = $(round(r_squared, digits=3)))";
-                                n_tracks_filtered=n_tracks_filtered)
+    # Bounds: σ_motion² ≥ 0, and with `clamp_k_to_one` also k ≥ 1. When a bound binds,
+    # the other parameter is refit with the bound held: keeping the value fitted jointly
+    # with the out-of-bound one moves the applied variance away from the data.
+    if fit.A < 0
+        fit, keep, conv = iter(0.0, fit.B; fixA = 0.0)
+        converged &= conv
+        fit isa String && return fallback(fit, count(keep))
     end
     # The slope must be positive and determined: when the reported precisions span a
     # narrow range, intercept and slope trade off and the fit can land on any slope,
     # including a negative one with a large intercept (k = 0 and a large motion term).
-    if !(B > 0 && B >= _CAL_MIN_SLOPE_SIGNIF * B_sigma)
-        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
-                                "CRLB scale not determined: slope B = $(round(B, sigdigits=3)) " *
-                                "± $(round(B_sigma, sigdigits=3)) (the reported precisions " *
-                                "may span too narrow a range)";
-                                n_tracks_filtered=n_tracks_filtered)
+    if !(fit.B > 0 && fit.B >= _CAL_MIN_SLOPE_SIGNIF * fit.B_sigma)
+        return fallback("CRLB scale not determined: slope B = $(round(fit.B, sigdigits=3)) " *
+                        "± $(round(fit.B_sigma, sigdigits=3)) (the reported precisions " *
+                        "may span too narrow a range)", count(keep))
     end
+    if config.clamp_k_to_one && fit.B < 1
+        fit, keep, conv = iter(max(fit.A, 0.0), 1.0; fixB = 1.0)
+        converged &= conv
+        fit isa String && return fallback(fit, count(keep))
+        if fit.A < 0   # both bounds bind: the CRLB as reported, no motion term
+            fit = merge(fit, (A = 0.0, A_sigma = 0.0))
+        end
+    end
+    n_pairs = count(keep)
+    (; A, B, A_sigma, B_sigma, r_squared, bin_centers, bin_observed, n_per_bin) = fit
 
     # Extract parameters -- fit was in nm², convert to μm² for storage.
-    # A is the pair intercept 2·σ_motion² (nm²), B is k² (dimensionless).
-    sigma_motion_nm = sqrt(max(0.0, A) / 2)
-    k_sq = max(0.0, B)
-    k_scale = sqrt(k_sq)
-    if config.clamp_k_to_one
-        k_scale = max(k_scale, 1.0)
-    end
+    # A is the pair intercept 2·σ_motion² (nm²), B is k² (dimensionless), both within
+    # their bounds, so the stored line A + B·x is the applied calibration.
+    sigma_motion_nm = sqrt(A / 2)
+    k_scale = sqrt(B)
 
     # Convert A, A_sigma, bin data from nm² to μm² for CalibrationResult
     A_um2 = A * 1e-6

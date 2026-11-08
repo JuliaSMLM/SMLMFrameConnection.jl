@@ -3,6 +3,7 @@ include("test_helpers.jl")
 
 using Random
 using SMLMSim
+using Statistics
 
 # Helper: deterministic pseudo-random from hash (no Random import needed)
 _hashval(seed::Int, i::Int) = mod(hash(seed + i * 7919), UInt64) / typemax(UInt64)
@@ -128,6 +129,24 @@ end
             @test !r.calibration_applied ||
                   (abs(r.k_scale - 1) < 0.05 && r.sigma_motion_nm < 2.5)
             @test r.k_scale > 0
+        end
+    end
+
+    @testset "applied variance matches the truth when a bound binds" begin
+        # Per-localization variance the calibration applies at the median reported σ,
+        # against the truth σ_motion² + k²·σ². A bound that binds (σ_motion² ≥ 0, or
+        # k ≥ 1 with the clamp) refits the other parameter; keeping the jointly fitted
+        # value instead gave 1.0-2.0 times the truth on these fixtures.
+        cases = ((k = 1.0, σm = 0.0, photons = (50.0, 55.0)),
+                 (k = 1.5, σm = 0.005, photons = (20.0, 400.0)))
+        for c in cases, seed in 1:10, clamp in (true, false)
+            smld = calibration_fixture(k = c.k, σ_motion = c.σm, photons = c.photons, seed = seed)
+            r = SMLMFrameConnection.analyze_calibration(smld,
+                    CalibrationConfig(clamp_k_to_one = clamp))
+            σ = median(e.σ_x for e in smld.emitters)
+            applied = r.calibration_applied ? (r.sigma_motion_nm / 1000)^2 + r.k_scale^2 * σ^2 : σ^2
+            truth = c.σm^2 + c.k^2 * σ^2
+            @test abs(applied / truth - 1) < 0.10
         end
     end
 
