@@ -152,6 +152,24 @@ end
         end
     end
 
+    @testset "motion-dominated data get a motion term, not a scale" begin
+        # Wide CRLB range (6.5-29 nm) with a dominant motion term: the observed variance
+        # barely changes with the CRLB, so the free fit's slope is lost in the noise. A
+        # scale-only fit there applied about half the variance to bright localizations
+        # and 4-8 times to dim ones. Check the applied variance at the 2nd and 98th
+        # percentile σ (or a fallback).
+        for (σm, ntracks) in ((0.100, 2000), (0.050, 200)), seed in 1:10
+            smld = calibration_fixture(k = 1.0, σ_motion = σm, ntracks = ntracks, seed = seed)
+            r = SMLMFrameConnection.analyze_calibration(smld, CalibrationConfig())
+            r.calibration_applied || continue
+            σs = sort([e.σ_x for e in smld.emitters])
+            for σ in (σs[ceil(Int, 0.02 * length(σs))], σs[floor(Int, 0.98 * length(σs))])
+                applied = (r.sigma_motion_nm / 1000)^2 + r.k_scale^2 * σ^2
+                @test abs(applied / (σm^2 + σ^2) - 1) < 0.15
+            end
+        end
+    end
+
     @testset "analyze_calibration ignores mismatched pairs" begin
         # 1% of the pairs are wrong links far beyond the localization error.
         smld = calibration_fixture(k = 1.5, σ_motion = 0.0)

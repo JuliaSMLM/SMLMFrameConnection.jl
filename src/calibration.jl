@@ -90,9 +90,15 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
         B_sigma = 0.0
     end
     r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : NaN
+    # Misfit comparable between models: sum over bins of n·(observed/predicted - 1)²
+    # (each bin's mean has relative variance about 1/n under the model), per degree of
+    # freedom left after the fitted parameters.
+    npar = (fixA === nothing) + (fixB === nothing)
+    pred = max.(Afit .+ Bfit .* bin_centers, eps())
+    misfit = sum(n_per_bin .* (bin_observed ./ pred .- 1) .^ 2) / max(1, n_valid_bins - npar)
 
     return (A = Afit, B = Bfit, A_sigma = A_sigma, B_sigma = B_sigma,
-            r_squared = r_squared, bin_centers = bin_centers,
+            r_squared = r_squared, misfit = misfit, bin_centers = bin_centers,
             bin_observed = bin_observed, n_per_bin = n_per_bin)
 end
 
@@ -133,10 +139,11 @@ the chi²(2) 99.7% point are left out as mismatches; the truncated bin means are
 corrected for the variance the cut removes, and the fit iterates to convergence.
 
 When the free fit cannot separate the two terms (slope not positive and at least 3
-standard errors, or R² < 0.1, as when the reported precisions span a narrow range), the
-CRLB scale is fit alone with σ_motion = 0 and `warning` says so. Falls back gracefully
-(returns `calibration_applied=false`) if fewer than 100 frame-to-frame pairs are
-available or no positive, determined scale can be fit.
+standard errors, or R² < 0.1: a narrow range of reported precisions, or a dominant
+motion term), both one-parameter models are fit, the CRLB scale alone (σ_motion = 0)
+and the motion term alone (k = 1), the better-fitting one is applied, and `warning`
+says which. Falls back gracefully (returns `calibration_applied=false`) if fewer than
+100 frame-to-frame pairs are available or neither one-parameter model is determined.
 """
 function analyze_calibration(smld::BasicSMLD{T,E},
                              config::CalibrationConfig) where {T, E<:SMLMData.AbstractEmitter}
@@ -287,31 +294,44 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         return fallback("Too few pairs after chi² pair filtering ($(count(keep)) < 100)", count(keep))
 
     # The free fit separates a motion term from the CRLB scale only when its slope is
-    # positive and determined (B > 0, B ≥ 3 standard errors, R² ≥ 0.1). When the
-    # reported precisions span a narrow range, intercept and slope trade off and the
-    # free fit can land on any slope, including a negative one with a large intercept.
-    # There the two terms are indistinguishable, so the CRLB scale is fit alone
-    # (σ_motion = 0), which still matches the observed variance. A free fit with A < 0
-    # is refit the same way: the bound σ_motion² ≥ 0 binds, and keeping the slope fitted
-    # jointly with the negative intercept moves the applied variance away from the data.
+    # positive and determined (B > 0, B ≥ 3 standard errors, R² ≥ 0.1). When it is not,
+    # one parameter must go: either the reported precisions span too narrow a range to
+    # tell the two terms apart, or a motion term dominates and the observed variance
+    # barely changes with the CRLB. Both one-parameter models are fit, the CRLB scale
+    # alone (σ_motion = 0) and the motion term alone (CRLB as reported, k = 1), and the
+    # one that fits the bins better is applied. On a narrow range both give the right
+    # total; on a wide range only the right one follows the data across the range.
+    # A determined free fit with A < 0 refits the scale alone: the bound σ_motion² ≥ 0
+    # binds, and keeping the slope fitted jointly with the negative intercept moves the
+    # applied variance away from the data.
     determined = fit.B > 0 && fit.B >= _CAL_MIN_SLOPE_SIGNIF * fit.B_sigma &&
                  fit.r_squared >= 0.1
     note = ""
-    if !determined || fit.A < 0
-        if !determined
-            note = "Motion and CRLB scale not separable (free fit: B = " *
-                   "$(round(fit.B, sigdigits=3)) ± $(round(fit.B_sigma, sigdigits=3)), " *
-                   "R² = $(round(fit.r_squared, digits=3)); the reported precisions may span " *
-                   "too narrow a range); fit the CRLB scale alone with σ_motion = 0"
+    if !determined
+        free = fit
+        sfit, skeep, sconv = iter(0.0, free.B > 0 ? free.B : B; fixA = 0.0)
+        mfit, mkeep, mconv = iter(max(free.A, 0.0), 1.0; fixB = 1.0)
+        sok = !(sfit isa String) && sfit.B > 0 &&
+              sfit.B >= _CAL_MIN_SLOPE_SIGNIF * sfit.B_sigma
+        mok = !(mfit isa String) && mfit.A > 0 &&
+              mfit.A >= _CAL_MIN_SLOPE_SIGNIF * mfit.A_sigma
+        if !sok && !mok
+            return fallback("Neither the CRLB scale nor a motion term is determined " *
+                            "(free fit: B = $(round(free.B, sigdigits=3)) ± " *
+                            "$(round(free.B_sigma, sigdigits=3)), R² = " *
+                            "$(round(free.r_squared, digits=3)))", count(keep))
         end
-        fit, keep, conv = iter(0.0, fit.B > 0 ? fit.B : B; fixA = 0.0)
+        use_scale = sok && (!mok || sfit.misfit <= mfit.misfit)
+        fit, keep, conv = use_scale ? (sfit, skeep, sconv) : (mfit, mkeep, mconv)
+        converged &= conv
+        note = "Motion and CRLB scale not separable (free fit: B = " *
+               "$(round(free.B, sigdigits=3)) ± $(round(free.B_sigma, sigdigits=3)), R² = " *
+               "$(round(free.r_squared, digits=3))); applied the better one-parameter fit: " *
+               (use_scale ? "CRLB scale alone, σ_motion = 0" : "motion term alone, k = 1")
+    elseif fit.A < 0
+        fit, keep, conv = iter(0.0, fit.B; fixA = 0.0)
         converged &= conv
         fit isa String && return fallback(fit, count(keep))
-        if !(fit.B > 0 && fit.B >= _CAL_MIN_SLOPE_SIGNIF * fit.B_sigma)
-            return fallback("CRLB scale not determined: slope B = " *
-                            "$(round(fit.B, sigdigits=3)) ± $(round(fit.B_sigma, sigdigits=3))",
-                            count(keep))
-        end
     end
     if config.clamp_k_to_one && fit.B < 1
         fit, keep, conv = iter(max(fit.A, 0.0), 1.0; fixB = 1.0)
