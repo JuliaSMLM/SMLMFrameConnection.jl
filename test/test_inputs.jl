@@ -14,6 +14,45 @@ include("test_helpers.jl")
         @test_throws ArgumentError defineidealFC(smld3)
     end
 
+    @testset "invalid inputs are refused at entry" begin
+        good = [make_emitter(5.0 + 0.01i, 5.0 + 0.003i, i) for i in 1:4]
+        bad(f) = (em = copy(good); em[2] = f(em[2]); make_test_smld(em; n_frames = 4))
+        with(e; kw...) = Emitter2DFit{Float64}(get(kw, :x, e.x), e.y, e.photons, e.bg,
+            get(kw, :σ_x, e.σ_x), e.σ_y, get(kw, :σ_xy, e.σ_xy), e.σ_photons, e.σ_bg,
+            get(kw, :frame, e.frame), e.dataset, e.track_id, e.id)
+        # Before: NaN σ crashed in precluster (BoundsError) or reached the LAP; zero σ
+        # gave a SingularException or NaN combined positions; frame 0 and a too-small
+        # n_frames gave a BoundsError in the cost matrix.
+        for f in (e -> with(e; σ_x = NaN), e -> with(e; σ_x = 0.0), e -> with(e; x = NaN),
+                  e -> with(e; σ_xy = 1.0), e -> with(e; frame = 0))
+            @test_throws ArgumentError frameconnect(bad(f))
+        end
+        @test_throws ArgumentError frameconnect(make_test_smld(good; n_frames = 3))
+        @test frameconnect(make_test_smld(good; n_frames = 0))[2].n_input == 4   # unknown
+        # combinelocalizations: a zero σ gave NaN position and σ silently.
+        tr = [make_emitter(5.0, 5.0, f; track_id = 1) for f in 1:2]
+        tr[2] = with(tr[2]; σ_x = 0.0)
+        @test_throws ArgumentError combinelocalizations(make_test_smld(tr; n_frames = 2))
+    end
+
+    @testset "combinelocalizations keeps unlinked and per-dataset tracks apart" begin
+        # track_id 0 is SMLMData's "unlinked": three of them used to become one
+        # localization at their mean position, across datasets.
+        em = [make_emitter(1.0, 1.0, 1; dataset = 1), make_emitter(5.0, 5.0, 2; dataset = 1),
+              make_emitter(9.0, 9.0, 3; dataset = 2)]
+        out = combinelocalizations(make_test_smld(em; n_frames = 3, n_datasets = 2)).emitters
+        @test length(out) == 3
+        @test sort([e.x for e in out]) == [1.0, 5.0, 9.0]
+        @test all(e -> e.track_id == 0, out)
+        # One track_id in two datasets is two tracks.
+        em = [make_emitter(1.0, 1.0, 1; track_id = 7, dataset = 1),
+              make_emitter(1.0, 1.0, 2; track_id = 7, dataset = 1),
+              make_emitter(9.0, 9.0, 1; track_id = 7, dataset = 2)]
+        out = combinelocalizations(make_test_smld(em; n_frames = 2, n_datasets = 2)).emitters
+        @test length(out) == 2
+        @test sort([e.dataset for e in out]) == [1, 2]
+    end
+
     @testset "one zero-area precluster returns" begin
         # Two localizations of one molecule at exactly one position: the precluster's
         # bounding box has zero area. This used to give an infinite density, a NaN

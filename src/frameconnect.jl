@@ -15,8 +15,10 @@ localizations in each pre-cluster, and 4) combining the connected localizations
 using their MLE position estimate assuming Gaussian noise.
 
 # Arguments
-- `smld::BasicSMLD`: 2D localizations to connect, in any order. Must contain emitters
-                     with valid position uncertainties (σ_x, σ_y). Localizations that
+- `smld::BasicSMLD`: 2D localizations to connect, in any order. Positions must be
+                     finite, σ_x and σ_y finite and > 0 with a positive-definite
+                     covariance, frames 1-based and at most `n_frames` (when it is
+                     set); otherwise an `ArgumentError` names the localization. Localizations that
                      carry z (3D) are refused with an `ArgumentError`; output emitters are
                      `Emitter2DFit`, so fields beyond those (e.g. a fit p-value) are not
                      carried into `info.connected`.
@@ -68,6 +70,7 @@ end
 function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T, E<:SMLMData.AbstractEmitter}
     t_start = time()
     _check_2d(smld, "frameconnect")
+    _check_inputs(smld, "frameconnect")
 
     # Degrade gracefully on empty input: there is nothing to connect, so return
     # the (empty) input unchanged with a zeroed info. This short-circuits before

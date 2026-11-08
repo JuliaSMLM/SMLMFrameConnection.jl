@@ -41,12 +41,11 @@ The fit leaves out pairs whose chi² under the current fit exceeds the chi²(2) 
 iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when the model holds.
 
 # Fields
-- `sigma_motion_nm::Float64`: Estimated per-localization motion std dev in nm (√(A/2) × 1000)
-- `k_scale::Float64`: CRLB scale factor (√B)
-- `A::Float64`: Fit intercept (pair-difference variance 2σ_motion², in μm²), ≥ 0
-- `B::Float64`: Fit slope (k²), ≥ 1 with `clamp_k_to_one`. When a bound binds (A < 0, or
-  B < 1 under the clamp) the other parameter is refit with the bound held, so the stored
-  line `A + B * x` is the calibration applied
+- `sigma_motion_nm::Float64`: Applied per-localization motion std dev in nm (√(A_applied/2) × 1000)
+- `k_scale::Float64`: Applied CRLB scale factor (√B_applied)
+- `A::Float64`: Intercept of the free two-parameter fit (pair-difference variance 2σ_motion², in μm²); can be negative
+- `B::Float64`: Slope of the free two-parameter fit (k²); below 1 when the clamp binds. The
+  line `A + B * bin_centers` goes through `bin_observed`
 - `A_sigma::Float64`: Standard error of A
 - `B_sigma::Float64`: Standard error of B
 - `r_squared::Float64`: R² of the WLS fit
@@ -55,7 +54,7 @@ iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when th
 - `n_tracks_used::Int`: Number of tracks contributing pairs
 - `n_tracks_filtered::Int`: Number of tracks removed by chi² filter
 - `bin_centers::Vector{Float64}`: Bin centers (CRLB variance) for diagnostic plots
-- `bin_observed::Vector{Float64}`: Bin observed variance (truncation-corrected) for diagnostic plots; the fit line is `A + B * bin_centers`
+- `bin_observed::Vector{Float64}`: Bin observed variance (truncation-corrected) of the free fit, for diagnostic plots
 - `bin_counts::Vector{Int}`: Number of pairs per bin (parallel to bin_centers/bin_observed); use to grey/drop low-statistics bins in diagnostic plots
 - `frame_shifts::Dict{Int, Vector{NTuple{2,Float64}}}`: Per-dataset (dx,dy) shifts for jitter plots
 - `calibration_applied::Bool`: Whether calibration was actually applied (false on fallback)
@@ -63,6 +62,10 @@ iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when th
   determined), or, on an applied calibration, that motion and CRLB scale were not
   separable and which one-parameter fit was applied, or that the fit did not converge
   (empty if OK)
+- `A_applied::Float64`: Intercept applied, in μm² (≥ 0): the free fit's, or a refit with a
+  bound held (A ≥ 0; B ≥ 1 with `clamp_k_to_one`), or a one-parameter fit when the free
+  fit cannot separate motion from the CRLB scale. 0 on fallback
+- `B_applied::Float64`: Slope applied (k², > 0, ≥ 1 with the clamp). 1 on fallback
 """
 struct CalibrationResult
     sigma_motion_nm::Float64
@@ -82,6 +85,21 @@ struct CalibrationResult
     frame_shifts::Dict{Int, Vector{NTuple{2,Float64}}}
     calibration_applied::Bool
     warning::String
+    A_applied::Float64
+    B_applied::Float64
+end
+
+# The 17-field form (before A_applied and B_applied existed): the applied values follow
+# from sigma_motion_nm and k_scale.
+function CalibrationResult(sigma_motion_nm, k_scale, A, B, A_sigma, B_sigma, r_squared,
+                           mean_chi2, n_pairs, n_tracks_used, n_tracks_filtered,
+                           bin_centers, bin_observed, bin_counts, frame_shifts,
+                           calibration_applied, warning)
+    return CalibrationResult(sigma_motion_nm, k_scale, A, B, A_sigma, B_sigma, r_squared,
+                             mean_chi2, n_pairs, n_tracks_used, n_tracks_filtered,
+                             bin_centers, bin_observed, bin_counts, frame_shifts,
+                             calibration_applied, warning,
+                             2 * (sigma_motion_nm / 1000)^2, k_scale^2)
 end
 
 """
@@ -199,6 +217,42 @@ function _check_2d(smld::BasicSMLD, fname::AbstractString)
         throw(ArgumentError("$fname: the localizations carry z " *
             "($(eltype(smld.emitters))); frame connection is 2D only and would drop " *
             "z and σ_z. Pass 2D localizations (for example Emitter2DFit)."))
+    end
+    return nothing
+end
+
+"""
+    _check_inputs(smld, fname; frames = true)
+
+Throw an `ArgumentError` naming the localization and field when an input would hang
+the LAP or give wrong numbers without an error: a non-finite position; σ_x or σ_y not
+finite and > 0 (a zero σ gives NaN combined positions, a NaN σ NaN costs); a
+covariance σ_xy that is not finite or leaves Σ not positive definite; and, with
+`frames`, a frame below 1 (frames are 1-based) or an `n_frames` smaller than the largest
+frame (`n_frames = 0` means unknown and is allowed).
+"""
+function _check_inputs(smld::BasicSMLD, fname::AbstractString; frames::Bool = true)
+    maxframe = 0
+    for (i, e) in enumerate(smld.emitters)
+        (isfinite(e.x) && isfinite(e.y)) ||
+            throw(ArgumentError("$fname: localization $i has a non-finite position " *
+                                "(x = $(e.x), y = $(e.y))"))
+        (isfinite(e.σ_x) && isfinite(e.σ_y) && e.σ_x > 0 && e.σ_y > 0) ||
+            throw(ArgumentError("$fname: localization $i has σ_x = $(e.σ_x), " *
+                                "σ_y = $(e.σ_y); both must be finite and > 0"))
+        (isfinite(e.σ_xy) && e.σ_xy^2 < e.σ_x^2 * e.σ_y^2) ||
+            throw(ArgumentError("$fname: localization $i has σ_xy = $(e.σ_xy); the " *
+                                "covariance must satisfy σ_xy² < σ_x²·σ_y²"))
+        if frames
+            e.frame >= 1 ||
+                throw(ArgumentError("$fname: localization $i has frame $(e.frame); " *
+                                    "frames are 1-based"))
+            maxframe = max(maxframe, e.frame)
+        end
+    end
+    if frames && smld.n_frames > 0 && smld.n_frames < maxframe
+        throw(ArgumentError("$fname: n_frames = $(smld.n_frames) is smaller than the " *
+                            "largest frame ($maxframe)"))
     end
     return nothing
 end

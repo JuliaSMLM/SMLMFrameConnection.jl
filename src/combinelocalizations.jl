@@ -9,8 +9,11 @@ Combine clustered localizations in `smld` into higher precision localizations.
 
 # Description
 This function combines localizations in `smld` that share the same value of
-track_id.  Localizations are combined assuming they arose from
-independent measurements of the same position with Gaussian errors.
+track_id within one dataset.  Localizations are combined assuming they arose from
+independent measurements of the same position with Gaussian errors. A localization
+with `track_id == 0` (SMLMData's "unlinked") is passed through on its own. Each
+combined localization takes frame, dataset and id from its track's earliest
+localization; the result does not depend on the order of the input.
 
 `track_length` is an inclusive `(min, max)` range on the number of localizations
 per track: a track is emitted only if `min <= nperID <= max`. `nothing` (the
@@ -22,16 +25,18 @@ sticky docking strands in dense DNA-PAINT data).
 function combinelocalizations(smld::BasicSMLD{T,E};
     track_length::Union{Tuple{Float64,Float64},Nothing}=nothing) where {T, E<:SMLMData.AbstractEmitter}
     _check_2d(smld, "combinelocalizations")
+    _check_inputs(smld, "combinelocalizations"; frames = false)
     # Extract arrays from emitters
     emitters = smld.emitters
     # Nothing to combine: return the (empty) input unchanged. The reductions
-    # below (`counts`, `first(emitters)`) assume at least one localization.
+    # below (`first(emitters)`) assume at least one localization.
     isempty(emitters) && return smld
     connectID = [e.track_id for e in emitters]
-    # Order by (track, frame, x, y), so the result does not depend on the input order:
-    # each combined localization takes frame, dataset and id from its track's first
-    # localization in time.
-    sortindices = sortperm(collect(zip(connectID, (e.frame for e in emitters),
+    # Order by (track, dataset, frame, x, y), so the result does not depend on the
+    # input order: each combined localization takes frame, dataset and id from its
+    # track's first localization in time.
+    sortindices = sortperm(collect(zip(connectID, (e.dataset for e in emitters),
+                                       (e.frame for e in emitters),
                                        (e.x for e in emitters), (e.y for e in emitters))))
     connectID = connectID[sortindices]
     x = [e.x for e in emitters][sortindices]
@@ -47,9 +52,18 @@ function combinelocalizations(smld::BasicSMLD{T,E};
     datasetnum = [e.dataset for e in emitters][sortindices]
     id = [e.id for e in emitters][sortindices]
 
-    # Loop over clusters and combine their localization data as appropriate.
-    nperID = counts(connectID)
-    nperID = nperID[nperID .!= 0]
+    # Groups: runs of one track_id within one dataset; every track_id-0 localization
+    # is a group of its own (unlinked).
+    nperID = Int[]
+    for i in eachindex(connectID)
+        newgroup = i == 1 || connectID[i] == 0 || connectID[i] != connectID[i-1] ||
+                   datasetnum[i] != datasetnum[i-1]
+        if newgroup
+            push!(nperID, 1)
+        else
+            nperID[end] += 1
+        end
+    end
     # ncumulative is built over the FULL set of present clusters so its offsets
     # span every localization in the sorted arrays. The length filter only
     # selects which clusters to emit (`keep`); it must not alter these offsets.

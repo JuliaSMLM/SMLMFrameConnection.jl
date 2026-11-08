@@ -296,6 +296,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     fit isa String && return fallback(fit, count(keep))
     count(keep) < 100 &&
         return fallback("Too few pairs after chi² pair filtering ($(count(keep)) < 100)", count(keep))
+    free = fit   # reported as A, B, their errors, R² and the bins
 
     # The free fit separates a motion term from the CRLB scale only when its slope is
     # positive and determined (B > 0, B ≥ 3 standard errors, R² ≥ 0.1). When it is not,
@@ -312,7 +313,6 @@ function analyze_calibration(smld::BasicSMLD{T,E},
                  fit.r_squared >= 0.1
     note = ""
     if !determined
-        free = fit
         sfit, skeep, sconv = iter(0.0, free.B > 0 ? free.B : B; fixA = 0.0)
         mfit, mkeep, mconv = iter(max(free.A, 0.0), 1.0; fixB = 1.0)
         sok = !(sfit isa String) && sfit.B > 0 &&
@@ -347,27 +347,23 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         end
     end
     n_pairs = count(keep)
-    (; A, B, A_sigma, B_sigma, r_squared, bin_centers, bin_observed, n_per_bin) = fit
+    # Applied: within the bounds (A ≥ 0; B ≥ 1 with the clamp). Fit was in nm².
+    A_applied, B_applied = fit.A, fit.B
+    sigma_motion_nm = sqrt(A_applied / 2)   # A is the pair intercept 2·σ_motion²
+    k_scale = sqrt(B_applied)                # B is k²
 
-    # Extract parameters -- fit was in nm², convert to μm² for storage.
-    # A is the pair intercept 2·σ_motion² (nm²), B is k² (dimensionless), both within
-    # their bounds, so the stored line A + B·x is the applied calibration.
-    sigma_motion_nm = sqrt(A / 2)
-    k_scale = sqrt(B)
-
-    # Convert A, A_sigma, bin data from nm² to μm² for CalibrationResult
-    A_um2 = A * 1e-6
-    A_sigma_um2 = A_sigma * 1e-6
-    bin_centers_um2 = bin_centers .* 1e-6
-    bin_observed_um2 = bin_observed .* 1e-6
+    # Reported fit: the free two-parameter fit (A, B, errors, R², bins), so the line
+    # A + B·x goes through the stored bins. Converted from nm² to μm².
+    (; A, B, A_sigma, B_sigma, r_squared, bin_centers, bin_observed, n_per_bin) = free
 
     return CalibrationResult(
         sigma_motion_nm, k_scale,
-        A_um2, B, A_sigma_um2, B_sigma, r_squared, mean_chi2,
+        A * 1e-6, B, A_sigma * 1e-6, B_sigma, r_squared, mean_chi2,
         n_pairs, n_tracks_used, n_tracks_filtered,
-        bin_centers_um2, bin_observed_um2, copy(n_per_bin), frame_shifts,
+        bin_centers .* 1e-6, bin_observed .* 1e-6, copy(n_per_bin), frame_shifts,
         true, join(filter(!isempty, [note, converged ? "" :
-              "Calibration fit did not converge in $(_CAL_MAX_ITER) iterations; the last fit was applied"]), "; ")
+              "Calibration fit did not converge in $(_CAL_MAX_ITER) iterations; the last fit was applied"]), "; "),
+        A_applied * 1e-6, B_applied
     )
 end
 
@@ -418,6 +414,7 @@ function _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts, warni
         n_pairs, n_tracks_used, n_tracks_filtered,
         Float64[], Float64[], Int[],   # bin_centers, bin_observed, bin_counts
         frame_shifts,
-        false, warning
+        false, warning,
+        0.0, 1.0                # A_applied, B_applied: no correction
     )
 end

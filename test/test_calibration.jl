@@ -171,6 +171,23 @@ end
         end
     end
 
+    @testset "A and B report the free fit; the applied values are separate" begin
+        # A clamped fit (true k 0.8 < 1): B is the fitted slope below 1, as before, so
+        # consumers can label the clamp; B_applied is 1.
+        smld = calibration_fixture(k = 0.8, σ_motion = 0.0)
+        r = SMLMFrameConnection.analyze_calibration(smld, CalibrationConfig())
+        @test r.calibration_applied
+        @test r.B < 1
+        @test abs(sqrt(r.B) - 0.8) < 0.05
+        @test r.B_applied == 1.0 && r.k_scale == 1.0
+        @test r.A_applied >= 0
+        # Old 17-field constructor still works.
+        r17 = CalibrationResult(2.0, 1.2, 1e-5, 1.44, 0.0, 0.0, 0.9, 2.0, 100, 10, 0,
+                                Float64[], Float64[], Int[],
+                                Dict{Int,Vector{NTuple{2,Float64}}}(), true, "")
+        @test r17.B_applied ≈ 1.44 && r17.A_applied ≈ 2 * (0.002)^2
+    end
+
     @testset "analyze_calibration ignores mismatched pairs" begin
         # 1% of the pairs are wrong links far beyond the localization error.
         smld = calibration_fixture(k = 1.5, σ_motion = 0.0)
@@ -195,7 +212,8 @@ end
         cal = SMLMFrameConnection.apply_calibration(smld, r)
         e0, e1 = smld.emitters[1], cal.emitters[1]
         @test e1.σ_x^2 ≈ (r.sigma_motion_nm / 1000)^2 + r.k_scale^2 * e0.σ_x^2
-        @test r.A ≈ 2 * (r.sigma_motion_nm / 1000)^2 rtol = 1e-8
+        @test r.A_applied ≈ 2 * (r.sigma_motion_nm / 1000)^2 rtol = 1e-8
+        @test r.B_applied ≈ r.k_scale^2 rtol = 1e-12
     end
 
     @testset "analyze_calibration with uniform brightness" begin
