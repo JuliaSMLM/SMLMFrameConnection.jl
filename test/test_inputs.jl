@@ -186,6 +186,16 @@ using Random
         _, info = frameconnect(make_test_smld(em; n_frames = 25))
         @test info.n_tracks == 2
         @test all(<(1.0), info.initial_density)
+        # Two precluster centers equal in exact arithmetic (a symmetric set around x = 10,
+        # and three at 10) but a rounding error apart: the density estimate counted the
+        # 2e-15 μm separation (density 1e29 per μm²) and returned 543 tracks instead of 2.
+        xs = vcat(fill(9.875, 180), fill(10.0, 180), fill(10.125, 180), fill(10.0, 3))
+        fs = vcat(1:540, 560:562)
+        em = [Emitter2DFit{Float64}(x, 25.0, 1000.0, 10.0, 1/64, 1/64, 0.0, 30.0, 3.0,
+                                    f, 1, 0, f) for (x, f) in zip(xs, fs)]
+        _, info = frameconnect(make_test_smld(em; n_frames = 562))
+        @test info.n_tracks == 2
+        @test all(<(1.0), info.initial_density)
         # Identical covariances at coordinates near the Float64 limit: the mean is finite.
         r = SMLMFrameConnection._precision_mean([0.0, 1e308, 1e308], fill(5.0, 3),
                                                 fill(1e4, 3), fill(1e4, 3), zeros(3), 1:3)

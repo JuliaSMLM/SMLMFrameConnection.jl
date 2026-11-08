@@ -36,7 +36,7 @@ julia --project=.
 
 1. **Precluster** (`precluster.jl`): Spatiotemporal clustering using KDTree nearest-neighbor search. Links each localization to its `max_neighbors` nearest neighbors within `max_sigma_dist * (mean σ_i + mean σ_j)` among the localizations of its frame and the `max_frame_gap` frames before; preclusters are the connected components of those links (union-find). Stores cluster assignments in emitter `track_id` fields.
 
-2. **Estimate parameters** (`estimateparams.jl`, `estimatedensities.jl`): Estimates photophysics rates (k_on, k_off, k_bleach, p_miss) from precluster statistics. Uses Optim.jl NelderMead to fit cumulative localization counts. `estimatedensities.jl` estimates local emitter density per cluster using KDTree neighbor distances.
+2. **Estimate parameters** (`estimateparams.jl`, `estimatedensities.jl`): Estimates photophysics rates (k_on, k_off, k_bleach, p_miss) from precluster statistics. Uses Optim.jl NelderMead to fit cumulative localization counts. `estimatedensities.jl` estimates local emitter density per cluster using KDTree neighbor distances; a neighbor center closer than 1e-6 × the cluster's localization error counts as the same center and is skipped (a rounding-level separation would otherwise give a density of ~1e29 per µm² and change the linking).
 
 3. **Connect via LAP** (`connectlocalizations.jl` -> `create_costmatrix.jl` -> `solveLAP.jl` -> `linkclusters.jl`): For each multi-emitter precluster, builds a 2Nx2N cost matrix with connection/birth/death blocks using negative log-likelihoods from spatial separation, observation probability, and photophysics. Solves with Hungarian.jl. `linkclusters.jl` updates `connectID` from LAP assignments.
 

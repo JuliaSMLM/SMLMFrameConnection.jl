@@ -51,6 +51,7 @@ function estimatedensities(smld::BasicSMLD{T,E},
     # Determine the center of all clusters assuming each arose from the same
     # emitter using precision-weighted mean with full covariance.
     clustercenters = zeros(2, nclusters)
+    clusterscale = zeros(nclusters)   # localization error scale √(mean σ_x · mean σ_y)
     for nn = 1:nclusters
         # Column layout: 1:x 2:y 3:σ_x 4:σ_y 5:σ_xy 6:frame ...
         # Precision-weighted mean with full covariance: center = (Σ Pᵢ)⁻¹ Σ Pᵢ posᵢ
@@ -59,6 +60,7 @@ function estimatedensities(smld::BasicSMLD{T,E},
                                           view(c, :, 4), view(c, :, 5), axes(c, 1))
         clustercenters[1, nn] = μx
         clustercenters[2, nn] = μy
+        clusterscale[nn] = sqrt(Statistics.mean(view(c, :, 3)) * Statistics.mean(view(c, :, 4)))
     end
 
     # Estimate the local cluster density based on the distance to
@@ -71,12 +73,15 @@ function estimatedensities(smld::BasicSMLD{T,E},
     kdtree = NearestNeighbors.KDTree(clustercenters)
     _, nndist_raw = NearestNeighbors.knn(kdtree, clustercenters, kneighbors + 1)
 
-    # Get non-zero distances (skip self-distance which is 0)
-    # Then get the k-th nearest non-self neighbor
+    # Skip the cluster itself and any cluster at the same center, then take the k-th
+    # nearest remaining neighbor. "The same center" means closer than a millionth of the
+    # localization error: no measurement resolves that, and a center a rounding error
+    # away from an equal one (a different summation order gives one) would otherwise
+    # count as a neighbor at 1e-15 μm and a density of 1e29 per μm².
     nndist = zeros(nclusters)
     for i in 1:nclusters
-        # Filter out zero distances (self)
-        nonzero_dists = filter(d -> d > 0, nndist_raw[i])
+        same = 1e-6 * clusterscale[i]
+        nonzero_dists = filter(d -> d > same, nndist_raw[i])
         if length(nonzero_dists) >= kneighbors
             sort!(nonzero_dists)
             nndist[i] = nonzero_dists[kneighbors]  # k-th nearest non-self neighbor
