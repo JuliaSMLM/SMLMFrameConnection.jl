@@ -142,8 +142,12 @@ When the free fit cannot separate the two terms (slope not positive and at least
 standard errors, or R² < 0.1: a narrow range of reported precisions, or a dominant
 motion term), both one-parameter models are fit, the CRLB scale alone (σ_motion = 0)
 and the motion term alone (k = 1), the better-fitting one is applied, and `warning`
-says which. Falls back gracefully (returns `calibration_applied=false`) if fewer than
-100 frame-to-frame pairs are available or neither one-parameter model is determined.
+says which (also as a logged warning). When both a motion term and a CRLB scale matter
+but the data cannot separate them (typically 800 pairs or fewer), neither
+one-parameter model is exact: the applied variance stays close near the median σ but
+can be off by tens of percent at the extremes. Falls back gracefully (returns
+`calibration_applied=false`) if fewer than 100 frame-to-frame pairs are available or
+neither one-parameter model is determined.
 """
 function analyze_calibration(smld::BasicSMLD{T,E},
                              config::CalibrationConfig) where {T, E<:SMLMData.AbstractEmitter}
@@ -328,6 +332,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
                "$(round(free.B, sigdigits=3)) ± $(round(free.B_sigma, sigdigits=3)), R² = " *
                "$(round(free.r_squared, digits=3))); applied the better one-parameter fit: " *
                (use_scale ? "CRLB scale alone, σ_motion = 0" : "motion term alone, k = 1")
+        @warn "analyze_calibration: $note"
     elseif fit.A < 0
         fit, keep, conv = iter(0.0, fit.B; fixA = 0.0)
         converged &= conv
