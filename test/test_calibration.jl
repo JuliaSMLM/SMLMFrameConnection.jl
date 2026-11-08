@@ -20,13 +20,15 @@ end
     # motion jitter of σ_motion per localization (drawn with photons = 1 so the draw
     # has exactly that σ). The σ_x, σ_y written to the data are the true CRLB divided
     # by k, so the data's CRLB is k times too small.
-    function calibration_fixture(; k, σ_motion, ntracks = 2000, nframes = 6, seed = 1)
+    function calibration_fixture(; k, σ_motion, ntracks = 2000, nframes = 6, seed = 1,
+                                 photons = (20.0, 400.0))
         Random.seed!(seed)
         cam = make_test_camera()
         model = Emitter2DFit{Float64}[]
         for t in 1:ntracks
             x, y = 2.0 + 46.0 * rand(), 2.0 + 46.0 * rand()
-            N = 20.0 + 380.0 * rand()            # CRLB 29 nm down to 6.5 nm at σ_psf 0.13
+            # Default: CRLB 29 nm down to 6.5 nm at σ_psf 0.13.
+            N = photons[1] + (photons[2] - photons[1]) * rand()
             for f in 1:nframes
                 push!(model, Emitter2DFit{Float64}(x, y, N, 10.0, 0.0, 0.0, 0.0, 1.0, 1.0,
                                                    f, 1, t, 0))
@@ -113,6 +115,19 @@ end
                 @test all(abs.(r.A .+ r.B .* r.bin_centers .- r.bin_observed) .<
                           5 .* r.bin_observed ./ sqrt.(r.bin_counts))
             end
+        end
+    end
+
+    @testset "analyze_calibration does not apply an undetermined slope" begin
+        # Precisions in a narrow range (CRLB 17.5-18.4 nm): intercept and slope are not
+        # separable, and an unchecked fit landed on B < 0 with a 26 nm motion term.
+        smld = calibration_fixture(k = 1.0, σ_motion = 0.0, photons = (50.0, 55.0))
+        for clamp in (true, false)
+            r = SMLMFrameConnection.analyze_calibration(smld,
+                    CalibrationConfig(clamp_k_to_one = clamp))
+            @test !r.calibration_applied ||
+                  (abs(r.k_scale - 1) < 0.05 && r.sigma_motion_nm < 2.5)
+            @test r.k_scale > 0
         end
     end
 

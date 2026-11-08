@@ -49,6 +49,10 @@ end
                       e.track_id) for e in c.emitters]
 
         ref_combined, ref_info = results["sorted"]
+        # True CRLB scale 1 and no motion: the calibration falls back or finds that.
+        cal = ref_info.calibration
+        @test !cal.calibration_applied ||
+              (abs(cal.k_scale - 1) < 0.05 && cal.sigma_motion_nm < 2.5)
         ref_tracks = zeros(Int, n)
         ref_tracks[orders["sorted"]] = [e.track_id for e in ref_info.connected.emitters]
         for (k, p) in orders

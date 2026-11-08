@@ -13,6 +13,8 @@ const _CAL_CHI2_CUT = -2 * log(0.003)
 const _CAL_TRUNC_FACTOR = 1 - (_CAL_CHI2_CUT / 2) * exp(-_CAL_CHI2_CUT / 2) /
                               (1 - exp(-_CAL_CHI2_CUT / 2))
 const _CAL_MAX_ITER = 100
+# The fitted slope B = k² is used only when B ≥ this many standard errors.
+const _CAL_MIN_SLOPE_SIGNIF = 3.0
 
 # Weighted least squares of binned `observed` on binned `reported` over the pairs in
 # `keep`; `bin_of[i]` is pair i's bin. Bins with fewer than 5 pairs are skipped. Each bin
@@ -93,7 +95,9 @@ the chi²(2) 99.7% point are left out as mismatches; the truncated bin means are
 corrected for the variance the cut removes, and the fit iterates to convergence.
 
 Falls back gracefully (returns `calibration_applied=false`) if fewer than 100
-frame-to-frame pairs are available or if the fit quality is poor (R² < 0.1).
+frame-to-frame pairs are available, if the fit quality is poor (R² < 0.1), or if the
+slope `B` is not positive and at least 3 standard errors (the reported precisions span
+too narrow a range to separate the CRLB scale from the motion term).
 """
 function analyze_calibration(smld::BasicSMLD{T,E},
                              config::CalibrationConfig) where {T, E<:SMLMData.AbstractEmitter}
@@ -264,6 +268,16 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     if r_squared < 0.1
         return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
                                 "Poor fit quality (R² = $(round(r_squared, digits=3)))";
+                                n_tracks_filtered=n_tracks_filtered)
+    end
+    # The slope must be positive and determined: when the reported precisions span a
+    # narrow range, intercept and slope trade off and the fit can land on any slope,
+    # including a negative one with a large intercept (k = 0 and a large motion term).
+    if !(B > 0 && B >= _CAL_MIN_SLOPE_SIGNIF * B_sigma)
+        return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
+                                "CRLB scale not determined: slope B = $(round(B, sigdigits=3)) " *
+                                "± $(round(B_sigma, sigdigits=3)) (the reported precisions " *
+                                "may span too narrow a range)";
                                 n_tracks_filtered=n_tracks_filtered)
     end
 
