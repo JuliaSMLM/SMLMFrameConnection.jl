@@ -53,13 +53,15 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float64}},
         # Combined covariance matrix for two localizations:
         # Σ_comb = Σ_mm + Σ_nn (variances add for independent measurements)
         σ_x² = x_se[mm]^2 + x_se[nn]^2
-        σ_y² = y_se[mm]^2 + y_se[nn]^2
         σ_xy = xy_cov[mm] + xy_cov[nn]
-        det_Σ = σ_x² * σ_y² - σ_xy^2
+        # det(Σ_mm + Σ_nn), positive for positive-definite inputs however close to
+        # singular (σ_x²σ_y² - σ_xy² of the sums cancels there)
+        det_Σ = _pair_cov_det(x_se[mm], y_se[mm], xy_cov[mm], x_se[nn], y_se[nn], xy_cov[nn])
 
-        # Mahalanobis distance: Δᵀ Σ⁻¹ Δ where Σ⁻¹ = [σ_y² -σ_xy; -σ_xy σ_x²] / det
+        # Mahalanobis distance Δᵀ Σ⁻¹ Δ, as Δx²/σ_x² + (Δy - (σ_xy/σ_x²)Δx)²·σ_x²/det:
+        # a sum of squares, never negative
         Δx, Δy = x[mm] - x[nn], y[mm] - y[nn]
-        mahal = (σ_y² * Δx^2 - 2*σ_xy*Δx*Δy + σ_x² * Δy^2) / det_Σ
+        mahal = Δx^2 / σ_x² + σ_x² * (Δy - (σ_xy / σ_x²) * Δx)^2 / det_Σ
 
         # Negative log-likelihood: -log(p) = 0.5*log(2π) + 0.5*log(det) + 0.5*mahal
         separationcost = log(2*pi) + 0.5*log(det_Σ) + 0.5*mahal

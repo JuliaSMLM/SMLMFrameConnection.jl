@@ -113,39 +113,14 @@ function combinelocalizations(smld::BasicSMLD{T,E};
         # Combine positions using precision-weighted mean with full 2x2 covariance.
         # For each measurement i: Σᵢ = [σ_x² σ_xy; σ_xy σ_y²], Pᵢ = Σᵢ⁻¹
         # Combined: Σ_comb = (Σ Pᵢ)⁻¹, pos_comb = Σ_comb * Σ(Pᵢ * posᵢ)
-        # Accumulate in Float64 to avoid precision loss (eps(Float32)=1.2e-7
-        # is larger than typical determinants for SMLM sigmas ~0.006 μm)
-        P_sum = zeros(Float64, 2, 2)
-        μ_weighted = zeros(Float64, 2)
-        for i in indices
-            sx2 = Float64(σ_x[i])^2
-            sy2 = Float64(σ_y[i])^2
-            sxy = Float64(σ_xy[i])
-            det_i = _cov_det(σ_x[i], σ_y[i], σ_xy[i])   # > 0: the entry check holds
-            # Precision matrix: P = [σ_y² -σ_xy; -σ_xy σ_x²] / det
-            P11 = sy2 / det_i
-            P22 = sx2 / det_i
-            P12 = -sxy / det_i
-            P_sum[1,1] += P11
-            P_sum[2,2] += P22
-            P_sum[1,2] += P12
-            P_sum[2,1] += P12
-            μ_weighted[1] += P11 * Float64(x[i]) + P12 * Float64(y[i])
-            μ_weighted[2] += P12 * Float64(x[i]) + P22 * Float64(y[i])
-        end
-
-        # Combined covariance = inverse of summed precision
-        det_P = P_sum[1,1] * P_sum[2,2] - P_sum[1,2]^2
-        Σ_comb_11 = P_sum[2,2] / det_P  # σ_x²
-        Σ_comb_22 = P_sum[1,1] / det_P  # σ_y²
-        Σ_comb_12 = -P_sum[1,2] / det_P  # σ_xy
-
-        # Combined position (cast back to emitter precision)
-        x_combined[out_idx] = ET(Σ_comb_11 * μ_weighted[1] + Σ_comb_12 * μ_weighted[2])
-        y_combined[out_idx] = ET(Σ_comb_12 * μ_weighted[1] + Σ_comb_22 * μ_weighted[2])
-        σ_x_combined[out_idx] = ET(sqrt(Σ_comb_11))
-        σ_y_combined[out_idx] = ET(sqrt(Σ_comb_22))
-        σ_xy_combined[out_idx] = ET(Σ_comb_12)
+        # In Float64, with the summed precision's determinant carried accurately
+        # (_precision_mean); cast back to emitter precision with the covariance kept
+        # positive definite through the rounding.
+        μx, μy, Σ11, Σ22, Σ12 = _precision_mean(x, y, σ_x, σ_y, σ_xy, indices)
+        x_combined[out_idx] = ET(μx)
+        y_combined[out_idx] = ET(μy)
+        σ_x_combined[out_idx], σ_y_combined[out_idx], σ_xy_combined[out_idx] =
+            _round_cov(ET, sqrt(Σ11), sqrt(Σ22), Σ12)
 
         # Photons and background: sum (independent measurements)
         photons_combined[out_idx] = sum(photons[indices])

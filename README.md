@@ -41,7 +41,7 @@ For complete SMLM workflows (detection + fitting + frame-connection + rendering)
 | `track_length` | `nothing` | Inclusive `(min, max)` range on localizations per track; tracks outside it are dropped (`nothing` disables). `info.n_filtered` reports the count dropped |
 | `calibration` | `nothing` | `CalibrationConfig()` fits the CRLB scale `k` and a motion term `σ_motion` from consecutive localizations in tracks and applies `Σ = σ_motion² I + k² Σ_CRLB` before combining; results in `info.calibration` |
 
-**Input:** `Emitter2DFit` localizations (2D only) with finite `x`, `y`; finite `σ_x`, `σ_y` > 0; a positive-definite covariance (`|σ_xy| < σ_x σ_y`); `frame` ≥ 1 and `n_frames` ≥ the largest frame (or 0). Other input is refused with an `ArgumentError`. Input order does not matter.
+**Input:** `Emitter2DFit` localizations (2D only) with finite `x`, `y`; finite `σ_x`, `σ_y` > 0; a positive-definite covariance (`|σ_xy| < σ_x σ_y`); for `frameconnect`, `frame` ≥ 1 and `n_frames` ≥ the largest frame (or 0). Other input is refused with an `ArgumentError`. Input order does not matter.
 
 ```julia
 # Keyword form (most common)

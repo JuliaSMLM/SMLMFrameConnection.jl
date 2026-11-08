@@ -110,7 +110,7 @@ Input `BasicSMLD` must contain emitters with position uncertainties.
 - `x`, `y`: Position (microns), finite
 - `σ_x`, `σ_y`: Position uncertainties (microns), finite and > 0
 - `σ_xy`: Position covariance (μm²); positive definite covariance, `|σ_xy| < σ_x σ_y`
-- `frame`: Frame number (1-based); `smld.n_frames` ≥ largest frame, or 0 (unknown)
+- `frame`: Frame number (1-based); for `frameconnect`, `smld.n_frames` ≥ largest frame, or 0 (unknown)
 
 **Optional fields:**
 - `photons`, `σ_photons`: Photon count (summed in output)

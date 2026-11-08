@@ -21,15 +21,39 @@ const _CAL_MIN_SLOPE_SIGNIF = 3.0
 # Fewest frame-to-frame pairs a calibration is applied from (after the cut).
 const _CAL_MIN_PAIRS = 100
 
-# chi² of a pair difference (dx, dy) under the pair covariance [sxx sxy; sxy syy]; it is
-# chi²(2) when that covariance is right. Inf when the covariance is not positive
-# definite (a trial fit with a negative term can give one): the cut then leaves the
+# E[S² | S ≤ c] for S ~ chi²(2): the second moment of the truncated statistic, for the
+# model variance of a truncated bin mean (_pair_obs_var).
+const _CAL_TRUNC_M2 = (8 - exp(-_CAL_CHI2_CUT / 2) * (_CAL_CHI2_CUT^2 + 4 * _CAL_CHI2_CUT + 8)) /
+                      (1 - exp(-_CAL_CHI2_CUT / 2))
+
+# chi² of a pair difference (dx, dy) under the pair covariance [sxx sxy; sxy syy] with
+# determinant `det` (given, computed without cancellation); it is chi²(2) when that
+# covariance is right. Written as dx²/sxx + (dy - (sxy/sxx)·dx)²·sxx/det, a sum of
+# squares. Inf when the covariance is not positive definite: the cut then leaves the
 # pair out.
-function _pair_chi2(dx, dy, sxx, syy, sxy)
-    det = sxx * syy - sxy^2
+function _pair_chi2(dx, dy, sxx, syy, sxy, det)
     (sxx > 0 && syy > 0 && det > 0) || return Inf
-    return (syy * dx^2 - 2 * sxy * dx * dy + sxx * dy^2) / det
+    return dx^2 / sxx + sxx * (dy - (sxy / sxx) * dx)^2 / det
 end
+
+# Model variance of one pair's truncated, rescaled observation (dx² + dy²)/(2g) when the
+# pair covariance is C = [cxx cxy; cxy cyy] and pairs beyond the cut are left out.
+# Whitened, dx² + dy² = λ₁w₁² + λ₂w₂² (λ the eigenvalues of C) with w uniform in angle on
+# |w|² ≤ c, so E[(dx² + dy²)²] = E[S² | S ≤ c]·(2·tr(C²) + tr(C)²)/8. Without the cut and
+# with C = v·I this is v², the variance the bin weights use.
+function _pair_obs_var(cxx, cyy, cxy)
+    trC = cxx + cyy
+    trC2 = cxx^2 + cyy^2 + 2 * cxy^2
+    return _CAL_TRUNC_M2 * (2 * trC2 + trC^2) / (32 * _CAL_TRUNC_FACTOR^2) - trC^2 / 4
+end
+
+# Correlation of the observations of two consecutive pairs of a track, (1,2) and (2,3):
+# they share localization 2, so Cov(d₁₂, d₂₃) = -Σ₂ with Σ₂ its model covariance
+# (σ_motion² I + k² Σ_CRLB), and for Gaussian differences
+# corr(|d₁₂|², |d₂₃|²) = tr(Σ₂²) / √(tr(C₁₂²)·tr(C₂₃²)): 0.25 when all are isotropic and
+# equal. (Computed without the cut, which barely changes it at the 99.7% point.)
+_adjacent_obs_corr(s11, s22, s12, trCa2, trCb2) =
+    (s11^2 + s22^2 + 2 * s12^2) / sqrt(trCa2 * trCb2)
 
 # Weighted least squares of binned `observed` on binned `reported` over the pairs in
 # `keep`; `bin_of[i]` is pair i's bin. Bins with fewer than 5 pairs are skipped. Each bin
@@ -40,14 +64,20 @@ end
 # `fixA` or `fixB` holds that parameter at the given value and fits the other alone.
 # The two-parameter fit needs 3 bins (one beyond its parameters, for a standard error); a
 # one-parameter fit is defined from 1 bin, and with a single bin its standard error comes
-# from the model variance of the bin mean instead of the scatter about the fit.
-# Returns a NamedTuple, or a String naming why no fit was possible.
+# from the model variance of the bin mean instead of the scatter about the fit: each
+# pair's variance from its own covariance shape (`pair_var`, see _pair_obs_var), plus the
+# covariance of consecutive pairs of a track that share a localization (`next_cov[i]`
+# between pairs i and i+1, 0 when they share none).
+# Returns a NamedTuple (with `n_used`, the pairs in the bins the fit used), or a String
+# naming why no fit was possible.
 function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
                      fixA::Union{Nothing,Float64} = nothing,
-                     fixB::Union{Nothing,Float64} = nothing)
+                     fixB::Union{Nothing,Float64} = nothing,
+                     pair_var = nothing, next_cov = nothing)
     bin_centers = Float64[]
     bin_observed = Float64[]
     bin_var = Float64[]
+    bin_model_var = Float64[]   # model variance of the bin mean, from pair_var
     n_per_bin = Int[]
     members = [Int[] for _ in 1:n_bins]
     for i in eachindex(reported)
@@ -58,6 +88,17 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
             push!(bin_centers, mean(@view reported[m]))
             push!(bin_observed, mean(@view observed[m]))
             push!(bin_var, var(@view observed[m]))
+            mv = NaN
+            if pair_var !== nothing
+                s = sum(@view pair_var[m])
+                if next_cov !== nothing   # m is ascending: i + 1 in m iff it follows i
+                    for k in 1:length(m)-1
+                        m[k+1] == m[k] + 1 && (s += 2 * next_cov[m[k]])
+                    end
+                end
+                mv = s / length(m)^2
+            end
+            push!(bin_model_var, mv)
             push!(n_per_bin, length(m))
         end
     end
@@ -104,16 +145,17 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
         Bfit = sum(weights .* bin_centers .* (bin_observed .- Afit)) / swcc
         ss_res = sum(weights .* (bin_observed .- (Afit .+ Bfit .* bin_centers)) .^ 2)
         A_sigma = 0.0
+        # One bin: the bin mean is A + B·center, so B's error is the mean's over center.
         B_sigma = n_valid_bins > 1 ?
                   sqrt(max(0.0, ss_res / (n_valid_bins - 1) / swcc)) :
-                  sqrt(1.0 / sum(w_model .* bin_centers .^ 2))
+                  sqrt(_one_bin_var(bin_model_var, var_of_bin_mean)) / bin_centers[1]
     else
         Bfit = fixB
         Afit = sum(weights .* (bin_observed .- Bfit .* bin_centers)) / sum(weights)
         ss_res = sum(weights .* (bin_observed .- (Afit .+ Bfit .* bin_centers)) .^ 2)
         A_sigma = n_valid_bins > 1 ?
                   sqrt(max(0.0, ss_res / (n_valid_bins - 1) / sum(weights))) :
-                  sqrt(1.0 / sum(w_model))
+                  sqrt(_one_bin_var(bin_model_var, var_of_bin_mean))
         B_sigma = 0.0
     end
     r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : NaN
@@ -125,15 +167,23 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
 
     return (A = Afit, B = Bfit, A_sigma = A_sigma, B_sigma = B_sigma,
             r_squared = r_squared, misfit = misfit, bin_centers = bin_centers,
-            bin_observed = bin_observed, n_per_bin = n_per_bin)
+            bin_observed = bin_observed, n_per_bin = n_per_bin, n_used = sum(n_per_bin))
 end
+
+# Variance of the single bin's mean: from the pairs' covariance shapes when given, else
+# the bin-weight model.
+_one_bin_var(bin_model_var, var_of_bin_mean) =
+    isfinite(bin_model_var[1]) && bin_model_var[1] > 0 ? bin_model_var[1] : var_of_bin_mean[1]
 
 # Iterate cut, truncation-corrected binned fit, and weights from (A, B) to a fixed
 # point; `fixA`/`fixB` as in `_binned_wls`. `dx`, `dy` are the pair differences, `vx`,
-# `vy`, `cxy` the sums of the pair's reported variances and covariances. Returns
-# (fit, keep, converged).
-function _iterate_calibration(reported, observed, bin_of, n_bins, dx, dy, vx, vy, cxy, A, B;
-                              fixA = nothing, fixB = nothing)
+# `vy`, `cxy` the sums of the pair's reported variances and covariances, `dS` the
+# determinant of that sum (_pair_cov_det). `adj[i]` says pair i+1 starts at pair i's
+# second localization, and `shared` holds that localization's (σx², σy², σxy) vectors,
+# for the model variance of a one-bin mean. Returns (fit, keep, converged).
+function _iterate_calibration(reported, observed, bin_of, n_bins, dx, dy, vx, vy, cxy, dS,
+                              A, B; fixA = nothing, fixB = nothing, adj = nothing,
+                              shared = nothing)
     fit = "No calibration fit was attempted"
     keep = trues(length(reported))
     converged = false
@@ -142,11 +192,28 @@ function _iterate_calibration(reported, observed, bin_of, n_bins, dx, dy, vx, vy
         # included: only then is its statistic chi²(2) and the truncation factor right.
         # A trial A < 0 (σ_motion² < 0, outside the model) enters the cut as 0: with a
         # strongly correlated Σ, A·I + B·Σ is not positive definite for any A below
-        # -B·λ_min(Σ), and every such pair would be cut.
+        # -B·λ_min(Σ), and every such pair would be cut. Its determinant,
+        # A² + A·B·(vx + vy) + B²·det(Σ₁ + Σ₂), is a sum of non-negative terms.
         Ac = max(A, 0.0)
-        keep = _pair_chi2.(dx, dy, Ac .+ B .* vx, Ac .+ B .* vy, B .* cxy) .<= _CAL_CHI2_CUT
+        cxx, cyy, cc = Ac .+ B .* vx, Ac .+ B .* vy, B .* cxy
+        detC = Ac^2 .+ Ac .* B .* (vx .+ vy) .+ B^2 .* dS
+        keep = _pair_chi2.(dx, dy, cxx, cyy, cc, detC) .<= _CAL_CHI2_CUT
+        pv = nc = nothing
+        if B > 0
+            pv = _pair_obs_var.(cxx, cyy, cc)
+            if adj !== nothing
+                trC2 = cxx .^ 2 .+ cyy .^ 2 .+ 2 .* cc .^ 2
+                nc = zeros(length(pv))
+                for i in findall(adj)
+                    s11, s22, s12 = Ac / 2 + B * shared[1][i], Ac / 2 + B * shared[2][i],
+                                    B * shared[3][i]
+                    nc[i] = _adjacent_obs_corr(s11, s22, s12, trC2[i], trC2[i+1]) *
+                            sqrt(max(pv[i], 0.0) * max(pv[i+1], 0.0))
+                end
+            end
+        end
         fit = _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
-                          fixA = fixA, fixB = fixB)
+                          fixA = fixA, fixB = fixB, pair_var = pv, next_cov = nc)
         fit isa String && break
         done = abs(fit.B - B) <= 1e-6 * max(1.0, abs(B)) &&
                abs(fit.A - A) <= 1e-6 * max(1.0, mean(reported))
@@ -206,6 +273,9 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     var_x_vec = Float64[]  # sum of CRLB variances for pair
     var_y_vec = Float64[]
     cov_xy_vec = Float64[]  # sum of CRLB covariances σ_xy for pair
+    det_vec = Float64[]     # determinant of the pair's summed CRLB covariance
+    adj_vec = Bool[]        # pair i+1 starts at pair i's second localization
+    end_vx, end_vy, end_cxy = Float64[], Float64[], Float64[]   # that localization's CRLB
     n_tracks_used = 0
     frame_shifts = Dict{Int, Vector{NTuple{2,Float64}}}()
 
@@ -215,6 +285,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         # Sort by frame within track
         sorted = sort(indices, by=i -> emitters[i].frame)
         n_before = length(dx_vec)
+        prev_i2 = 0
 
         for j in 1:(length(sorted) - 1)
             i1, i2 = sorted[j], sorted[j+1]
@@ -224,17 +295,27 @@ function analyze_calibration(smld::BasicSMLD{T,E},
             e1.dataset != e2.dataset && continue
             abs(e2.frame - e1.frame) != 1 && continue
 
-            dx = Float64(e2.x - e1.x)
-            dy = Float64(e2.y - e1.y)
-            vx = Float64(e1.σ_x^2 + e2.σ_x^2)
-            vy = Float64(e1.σ_y^2 + e2.σ_y^2)
-            cxy = Float64(e1.σ_xy + e2.σ_xy)
+            # Each field promoted to Float64 before any arithmetic: squares and sums
+            # formed in Float32 can turn two positive-definite covariances into a pair
+            # covariance that is not.
+            dx = Float64(e2.x) - Float64(e1.x)
+            dy = Float64(e2.y) - Float64(e1.y)
+            vx = Float64(e1.σ_x)^2 + Float64(e2.σ_x)^2
+            vy = Float64(e1.σ_y)^2 + Float64(e2.σ_y)^2
+            cxy = Float64(e1.σ_xy) + Float64(e2.σ_xy)
 
             push!(dx_vec, dx)
             push!(dy_vec, dy)
             push!(var_x_vec, vx)
             push!(var_y_vec, vy)
             push!(cov_xy_vec, cxy)
+            push!(det_vec, _pair_cov_det(e1.σ_x, e1.σ_y, e1.σ_xy, e2.σ_x, e2.σ_y, e2.σ_xy))
+            prev_i2 == i1 && (adj_vec[end] = true)
+            push!(adj_vec, false)
+            push!(end_vx, Float64(e2.σ_x)^2)
+            push!(end_vy, Float64(e2.σ_y)^2)
+            push!(end_cxy, Float64(e2.σ_xy))
+            prev_i2 = i2
 
             # Store frame shifts for jitter diagnostic
             ds = e1.dataset
@@ -251,7 +332,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
 
     n_pairs = length(dx_vec)
     mean_chi2 = n_pairs > 0 ?
-        mean(_pair_chi2.(dx_vec, dy_vec, var_x_vec, var_y_vec, cov_xy_vec)) : NaN
+        mean(_pair_chi2.(dx_vec, dy_vec, var_x_vec, var_y_vec, cov_xy_vec, det_vec)) : NaN
 
     # Fallback: not enough data
     if n_pairs < _CAL_MIN_PAIRS
@@ -281,6 +362,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     vx_nm2 = var_x_vec .* 1e6
     vy_nm2 = var_y_vec .* 1e6
     cxy_nm2 = cov_xy_vec .* 1e6
+    det_nm4 = det_vec .* 1e12
     dx_nm = dx_vec .* 1e3
     dy_nm = dy_vec .* 1e3
     dx2_nm2 = dx_vec .^ 2 .* 1e6
@@ -296,23 +378,27 @@ function analyze_calibration(smld::BasicSMLD{T,E},
               for r in reported_all]
 
     # Start from the median: with A = 0, chi²/B is chi²(2), whose median is 2·log(2).
-    z_raw = _pair_chi2.(dx_nm, dy_nm, vx_nm2, vy_nm2, cxy_nm2)
+    z_raw = _pair_chi2.(dx_nm, dy_nm, vx_nm2, vy_nm2, cxy_nm2, det_nm4)
     A = 0.0
     B = median(z_raw) / (2 * log(2))   # start; also the scale-only refit's start if needed
 
+    shared_nm2 = (end_vx .* 1e6, end_vy .* 1e6, end_cxy .* 1e6)
     iter(A0, B0; kw...) = _iterate_calibration(reported_all, observed_all, bin_of, n_bins,
                                                dx_nm, dy_nm, vx_nm2, vy_nm2, cxy_nm2,
-                                               A0, B0; kw...)
+                                               det_nm4, A0, B0; adj = adj_vec,
+                                               shared = shared_nm2, kw...)
     fallback(msg, n) = _fallback_result(mean_chi2, n, n_tracks_used, frame_shifts, msg;
                                         n_tracks_filtered=n_tracks_filtered)
-    too_few(n) = "Too few pairs after chi² pair filtering ($n < $_CAL_MIN_PAIRS)"
+    too_few(n) = "Too few pairs in the fit after the chi² cut ($n < $_CAL_MIN_PAIRS)"
+    # Pairs a fit actually used: kept by the cut and in a bin with enough pairs.
+    used(f) = f isa String ? 0 : f.n_used
 
     fit, keep, converged = iter(A, B)
     # No free fit when the reported precisions fill fewer than 3 bins (a narrow or
     # single value): the one-parameter fits below still determine the total.
     free = fit isa String ? nothing : fit   # reported as A, B, errors, R² and the bins
-    free !== nothing && count(keep) < _CAL_MIN_PAIRS &&
-        return fallback(too_few(count(keep)), count(keep))
+    free !== nothing && used(free) < _CAL_MIN_PAIRS &&
+        return fallback(too_few(used(free)), used(free))
 
     # The free fit separates a motion term from the CRLB scale only when its slope is
     # positive and determined (B > 0, B ≥ 3 standard errors, R² ≥ 0.1). When it is not,
@@ -332,16 +418,18 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         sfit, skeep, sconv = iter(0.0, free !== nothing && free.B > 0 ? free.B : B; fixA = 0.0)
         mfit, mkeep, mconv = iter(free !== nothing ? max(free.A, 0.0) : 0.0, 1.0; fixB = 1.0)
         # A candidate counts only when it is determined and keeps enough pairs.
-        sok = !(sfit isa String) && count(skeep) >= _CAL_MIN_PAIRS && sfit.B > 0 &&
+        sok = used(sfit) >= _CAL_MIN_PAIRS && sfit.B > 0 &&
               sfit.B >= _CAL_MIN_SLOPE_SIGNIF * sfit.B_sigma
-        mok = !(mfit isa String) && count(mkeep) >= _CAL_MIN_PAIRS && mfit.A > 0 &&
+        mok = used(mfit) >= _CAL_MIN_PAIRS && mfit.A > 0 &&
               mfit.A >= _CAL_MIN_SLOPE_SIGNIF * mfit.A_sigma
         why = free === nothing ? "no free fit: $fit" :
               "free fit: B = $(round(free.B, sigdigits=3)) ± " *
               "$(round(free.B_sigma, sigdigits=3)), R² = $(round(free.r_squared, digits=3))"
         if !sok && !mok
+            nmax = max(used(sfit), used(mfit))
+            nmax < _CAL_MIN_PAIRS && return fallback(too_few(nmax), nmax)
             return fallback("Neither the CRLB scale nor a motion term is determined ($why)",
-                            count(keep))
+                            nmax)
         end
         use_scale = sok && (!mok || sfit.misfit <= mfit.misfit)
         fit, keep, conv = use_scale ? (sfit, skeep, sconv) : (mfit, mkeep, mconv)
@@ -363,9 +451,9 @@ function analyze_calibration(smld::BasicSMLD{T,E},
             fit = merge(fit, (A = 0.0, A_sigma = 0.0))
         end
     end
-    # Every refit runs its own cut: the applied fit, not only the free one, must keep
-    # enough pairs.
-    n_pairs = count(keep)
+    # Every refit runs its own cut: the applied fit, not only the free one, must use
+    # enough pairs (kept by its cut and in its bins).
+    n_pairs = used(fit)
     n_pairs < _CAL_MIN_PAIRS && return fallback(too_few(n_pairs), n_pairs)
     # Applied: within the bounds (A ≥ 0; B ≥ 1 with the clamp). Fit was in nm².
     A_applied, B_applied = fit.A, fit.B
@@ -411,23 +499,15 @@ function apply_calibration(smld::BasicSMLD{T,E},
     for i in eachindex(emitters)
         e = emitters[i]
         # Σ_corrected = σ_motion² I + k² Σ_CRLB
-        new_σx_sq = ET(sigma_motion_sq + k_sq * e.σ_x^2)
-        new_σy_sq = ET(sigma_motion_sq + k_sq * e.σ_y^2)
-        new_σx, new_σy = sqrt(new_σx_sq), sqrt(new_σy_sq)
-        new_σxy = ET(k_sq * e.σ_xy)
-        # A positive-definite input stays positive definite in exact arithmetic, but
-        # rounding to ET can carry a correlation within a rounding error of ±1 past it:
-        # then take the largest |σ_xy| in ET below σ_x σ_y (at most a few steps from the
-        # bound). Other input (only reachable by calling this directly; frameconnect
-        # refuses it) is left as computed.
-        if _cov_det(new_σx, new_σy, new_σxy) <= 0 && _cov_det(e.σ_x, e.σ_y, e.σ_xy) > 0
-            lim = Float64(new_σx) * Float64(new_σy)
-            c = ET(copysign(lim, Float64(new_σxy)))
-            while abs(Float64(c)) >= lim
-                c = c > 0 ? prevfloat(c) : nextfloat(c)
-            end
-            new_σxy = c
-        end
+        # In Float64 (squares of tiny Float32 values underflow), then rounded to ET. A
+        # positive-definite input stays positive definite: _round_cov keeps it so through
+        # the rounding. Other input (only reachable by calling this directly;
+        # frameconnect refuses it) is converted as computed.
+        sx = sqrt(sigma_motion_sq + k_sq * Float64(e.σ_x)^2)
+        sy = sqrt(sigma_motion_sq + k_sq * Float64(e.σ_y)^2)
+        sxy = k_sq * Float64(e.σ_xy)
+        new_σx, new_σy, new_σxy = _cov_det(e.σ_x, e.σ_y, e.σ_xy) > 0 ?
+            _round_cov(ET, sx, sy, sxy) : (ET(sx), ET(sy), ET(sxy))
 
         new_emitters[i] = SMLMData.Emitter2DFit{ET}(
             e.x, e.y, e.photons, e.bg,

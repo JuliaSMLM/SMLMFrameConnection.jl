@@ -189,29 +189,102 @@ mutable struct ParamStruct
 end
 ParamStruct() = ParamStruct([], 2, 0.0, 0.0, 0.0, 0.0, 5.0, 5, 2)
 
-"""
-    _check_2d(smld, fname)
-
-Throw an `ArgumentError` if any localization in `smld` carries a z coordinate. Frame
-connection is 2D: it builds `Emitter2DFit` output and would silently drop z and σ_z.
-"""
-# Determinant σ_x²σ_y² - σ_xy² of a localization covariance, in Float64 as
-# (σ_xσ_y - σ_xy)(σ_xσ_y + σ_xy): the product of two Float32 values is exact in Float64,
-# so the sign is exact for Float32 input, and the factored form keeps it accurate when
-# |σ_xy| is close to σ_xσ_y. Every determinant in the package goes through here, so a
-# covariance that passes the entry check has a positive determinant everywhere.
-function _cov_det(σx, σy, σxy)
-    p = Float64(σx) * Float64(σy)
-    q = abs(Float64(σxy))
-    return (p - q) * (p + q)
-end
-
 # Total order over every field of a localization, used to sort before the pipeline:
 # localizations that tie on (dataset, frame, x, y) are ordered by their other fields,
 # not by their place in the input; ones equal in every field are interchangeable.
 _order_key(e) = (e.dataset, e.frame, e.x, e.y, e.σ_x, e.σ_y, e.σ_xy, e.photons, e.bg,
                  e.σ_photons, e.σ_bg, e.id, e.track_id)
 
+# Covariance arithmetic. Every determinant in the package is built from these, so a
+# covariance that passes the entry check (positive definite in exact arithmetic) keeps a
+# positive determinant through every sum and inverse, however close |σ_xy| is to σ_xσ_y.
+
+# Determinant σ_x²σ_y² - σ_xy² of a localization covariance, in Float64 as
+# (p - q)(p + q) with p = σ_xσ_y carried exactly as a sum of two Float64 values (fma):
+# the sign is exact for Float32 and Float64 input, and the factored form keeps the value
+# accurate when q = |σ_xy| is close to p.
+function _cov_det(σx, σy, σxy)
+    a, b = Float64(σx), Float64(σy)
+    p = a * b
+    e = fma(a, b, -p)            # σ_xσ_y = p + e exactly
+    q = abs(Float64(σxy))
+    return ((p - q) + e) * ((p + q) + e)
+end
+
+# det(A + B) for 2×2 positive (semi)definite A = [a11 a12; a12 a22], B likewise, with
+# their determinants da, db given accurately. det(A + B) = da + db + a11·b22 + a22·b11 -
+# 2·a12·b12, and the cross term is written as a sum of non-negative parts,
+# (√(a11·b22) - √(a22·b11))² + 2(√(a11·a22)·√(b11·b22) - a12·b12), the last one through
+# √(a11·a22) - |a12| = da / (√(a11·a22) + |a12|): no subtraction of nearly equal values,
+# so the result is positive whenever da or db is.
+function _det_add(a11, a22, a12, da, b11, b22, b12, db)
+    ra, rb = sqrt(a11 * a22), sqrt(b11 * b22)
+    t1 = (sqrt(a11 * b22) - sqrt(a22 * b11))^2
+    t2 = if a12 * b12 <= 0
+        2 * (ra * rb + abs(a12 * b12))
+    else
+        2 * (da / (ra + abs(a12)) * rb + abs(a12) * db / (rb + abs(b12)))
+    end
+    return da + db + t1 + t2
+end
+
+# Determinant of the sum of two localization covariances (a pair difference's covariance).
+function _pair_cov_det(σx1, σy1, σxy1, σx2, σy2, σxy2)
+    return _det_add(Float64(σx1)^2, Float64(σy1)^2, Float64(σxy1), _cov_det(σx1, σy1, σxy1),
+                    Float64(σx2)^2, Float64(σy2)^2, Float64(σxy2), _cov_det(σx2, σy2, σxy2))
+end
+
+# Precision-weighted mean of the localizations `idx` with full 2×2 covariances:
+# Σ = (Σᵢ Σᵢ⁻¹)⁻¹, μ = Σ·Σᵢ Σᵢ⁻¹ xᵢ, in Float64. The determinant of the summed precision
+# is carried along accurately (_det_add) instead of recomputed from the sums, where it
+# cancels for nearly singular covariances. Positions enter relative to the first
+# localization: with a nearly singular precision, Σᵢ Σᵢ⁻¹ xᵢ cancels, and its error then
+# scales with the offsets (about σ) instead of the absolute position.
+# Returns (μx, μy, Σ11, Σ22, Σ12).
+function _precision_mean(x, y, σx, σy, σxy, idx)
+    S11 = S22 = S12 = det_S = 0.0
+    m1 = m2 = 0.0
+    x0, y0 = Float64(x[first(idx)]), Float64(y[first(idx)])
+    for (j, i) in enumerate(idx)
+        det_i = _cov_det(σx[i], σy[i], σxy[i])   # > 0: the entry check holds
+        # Precision matrix P = [σ_y² -σ_xy; -σ_xy σ_x²] / det, with det(P) = 1/det
+        P11 = Float64(σy[i])^2 / det_i
+        P22 = Float64(σx[i])^2 / det_i
+        P12 = -Float64(σxy[i]) / det_i
+        det_S = j == 1 ? 1 / det_i : _det_add(S11, S22, S12, det_S, P11, P22, P12, 1 / det_i)
+        S11 += P11
+        S22 += P22
+        S12 += P12
+        dx, dy = Float64(x[i]) - x0, Float64(y[i]) - y0
+        m1 += P11 * dx + P12 * dy
+        m2 += P12 * dx + P22 * dy
+    end
+    Σ11, Σ22, Σ12 = S22 / det_S, S11 / det_S, -S12 / det_S
+    return x0 + (Σ11 * m1 + Σ12 * m2), y0 + (Σ12 * m1 + Σ22 * m2), Σ11, Σ22, Σ12
+end
+
+# Round a positive-definite covariance (σx, σy, σxy, computed in Float64) to the element
+# type ET. Rounding can carry a correlation within a rounding error of ±1 past it; then
+# σxy becomes the largest |σxy| in ET below σx·σy, a few steps from that bound at most
+# (and 0 if those steps do not reach it, so this always returns).
+function _round_cov(::Type{ET}, σx, σy, σxy) where {ET}
+    ox, oy, oxy = ET(σx), ET(σy), ET(σxy)
+    _cov_det(ox, oy, oxy) > 0 && return ox, oy, oxy
+    (ox > 0 && oy > 0 && isfinite(ox) && isfinite(oy)) || return ox, oy, oxy
+    c = ET(copysign(Float64(ox) * Float64(oy), Float64(σxy)))
+    for _ in 1:8
+        _cov_det(ox, oy, c) > 0 && return ox, oy, c
+        c = c > 0 ? prevfloat(c) : nextfloat(c)
+    end
+    return ox, oy, zero(ET)
+end
+
+"""
+    _check_2d(smld, fname)
+
+Throw an `ArgumentError` if any localization in `smld` carries a z coordinate. Frame
+connection is 2D: it builds `Emitter2DFit` output and would silently drop z and σ_z.
+"""
 function _check_2d(smld::BasicSMLD, fname::AbstractString)
     if any(e -> hasproperty(e, :z), smld.emitters)
         throw(ArgumentError("$fname: the localizations carry z " *

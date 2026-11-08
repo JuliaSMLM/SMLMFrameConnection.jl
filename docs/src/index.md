@@ -33,7 +33,7 @@ Input `BasicSMLD` must contain `Emitter2DFit` emitters with:
 - `x`, `y`: Position coordinates (microns), finite
 - `σ_x`, `σ_y`: Position uncertainties (microns), finite and > 0
 - `σ_xy`: Position covariance (μm²); the covariance must be positive definite, `|σ_xy| < σ_x σ_y`
-- `frame`: Frame number (1-based); `smld.n_frames` is at least the largest frame, or 0 (unknown)
+- `frame`: Frame number (1-based); for `frameconnect`, `smld.n_frames` is at least the largest frame, or 0 (unknown)
 
 **Optional:**
 - `photons`, `bg`: Photometry (summed in output)

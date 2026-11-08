@@ -211,14 +211,14 @@ end
     end
 
     @testset "an applied calibration keeps at least 100 pairs" begin
-        # Exactly 100 pairs: the free fit kept all 100, then a refit (bound or
+        # Just over 100 pairs: the free fit used 100 or more, then a refit (bound or
         # one-parameter) ran its own cut and applied the calibration from 99 or fewer.
         cfg = CalibrationConfig(clamp_k_to_one = false)
         napplied = 0
         for seed in 1:30
             r = SMLMFrameConnection.analyze_calibration(
-                    calibration_fixture(k = 1.5, σ_motion = 0.0, ntracks = 100, nframes = 2,
-                                        seed = seed), cfg)
+                    calibration_fixture(k = 1.5, σ_motion = 0.0, ntracks = 100 + seed,
+                                        nframes = 2, seed = seed), cfg)
             r.calibration_applied || continue
             napplied += 1
             @test r.n_pairs >= 100
@@ -461,6 +461,65 @@ end
         @test info_cal.calibration isa CalibrationResult
         @test length(combined_no_cal.emitters) > 0
         @test length(combined_cal.emitters) > 0
+    end
+
+    @testset "nearly singular Float32 pairs are kept" begin
+        # Positive-definite Float32 covariances whose pair sum, formed in Float32, was not:
+        # every pair got chi² = Inf, was cut, and calibration fell back. Displacements lie
+        # on the covariance's major axis (k = 1).
+        sx, sy, sxy = 0.021778854f0, 0.018422747f0, 0.00040122631f0
+        em = Emitter2DFit{Float32}[]
+        for t in 1:100
+            z = (t - 50.5) / 29
+            x1 = 2f0 + 0.4f0 * t
+            push!(em, Emitter2DFit{Float32}(x1, 5f0, 1000f0, 10f0, sx, sy, sxy, 30f0, 3f0,
+                                            1, 1, t, 0))
+            push!(em, Emitter2DFit{Float32}(x1 + Float32(sqrt(2) * z * sx),
+                                            5f0 + Float32(sqrt(2) * z * sy), 1000f0, 10f0,
+                                            sx, sy, sxy, 30f0, 3f0, 2, 1, t, 0))
+        end
+        r = SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
+                                                    CalibrationConfig(clamp_k_to_one = false))
+        @test r.calibration_applied
+        @test r.n_pairs == 100
+    end
+
+    @testset "the 100-pair minimum counts the pairs the fit used" begin
+        # 80 pairs in one bin and 20 spread one per bin: the fit used 80 pairs (bins need
+        # 5), but 100 survived the cut and the calibration was applied.
+        em = Emitter2DFit{Float64}[]
+        reps = vcat(fill(800.0, 80), collect(900.0:100.0:2800.0))   # nm², (vx + vy)/2
+        for (t, rep) in enumerate(reps)
+            σ = sqrt(rep / 2) * 1e-3
+            d = sqrt(4 * rep * SMLMFrameConnection._CAL_TRUNC_FACTOR) * 1e-3   # k = 2
+            push!(em, make_emitter(2.0 + 0.4t, 5.0, 1; σ_pos = σ, track_id = t))
+            push!(em, make_emitter(2.0 + 0.4t + d, 5.0 + d, 2; σ_pos = σ, track_id = t))
+        end
+        r = SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
+                                                    CalibrationConfig(clamp_k_to_one = false))
+        @test !r.calibration_applied
+        @test r.n_pairs == 80
+    end
+
+    @testset "the one-bin standard error matches the scatter across seeds" begin
+        # One reported precision (one bin), correlated CRLB (ρ = 0.99), tracks of 3 frames
+        # (consecutive pairs share a localization). The standard error assumed isotropic,
+        # independent pairs: 1.64 times too small; now within the Monte Carlo error.
+        Bs, rel = Float64[], Float64[]
+        cfg = CalibrationConfig(clamp_k_to_one = false)
+        for seed in 1:300
+            r = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+                SMLMFrameConnection.analyze_calibration(
+                    calibration_fixture(k = 2.0, σ_motion = 0.0, ρ = 0.99,
+                                        photons = (100.0, 100.0), ntracks = 60, nframes = 3,
+                                        seed = seed), cfg)
+            end
+            # One bin fits the scale alone and the motion alone equally; take the former.
+            (r.calibration_applied && r.A_applied == 0) || continue
+            push!(Bs, r.B_applied); push!(rel, r.B_sigma / r.B_applied)
+        end
+        @test length(Bs) > 100
+        @test 0.85 < (std(Bs) / mean(Bs)) / mean(rel) < 1.2
     end
 
     @testset "the deprecated chi² track filter is ignored" begin

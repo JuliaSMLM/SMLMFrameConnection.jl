@@ -118,6 +118,52 @@ using Random
         @test (o32.x, o32.y, o32.σ_x, o32.σ_y, o32.σ_xy) == (e32.x, e32.y, e32.σ_x, e32.σ_y, e32.σ_xy)
     end
 
+    @testset "nearly singular covariances stay finite and positive definite" begin
+        # Positive definite in exact arithmetic, |σ_xy| within a rounding error of
+        # σ_xσ_y (inputs from the Codex re-review of cba16d3, where each failed).
+        e64(x, y, f, t; tid = 0) = Emitter2DFit{Float64}(x, y, 1000.0, 10.0, t..., 30.0, 3.0,
+                                                         f, 1, tid, 0)
+        e32(x, y, f, t; tid = 0) = Emitter2DFit{Float32}(x, y, 1000f0, 10f0, t..., 30f0, 3f0,
+                                                         f, 1, tid, 0)
+        posdef(e) = SMLMFrameConnection._cov_det(e.σ_x, e.σ_y, e.σ_xy) > 0
+        # Float64 σ_xσ_y rounds onto σ_xy: refused before, accepted now.
+        t6 = (0.03, 0.02, 0.0006)
+        @test SMLMFrameConnection._cov_det(t6...) > 0
+        @test frameconnect(make_test_smld([e64(5.0 + 0.002i, 5.0, i, t6) for i in 1:4];
+                                          n_frames = 4))[2].n_input == 4
+        # The sum of two such covariances: create_costmatrix took log of a negative
+        # determinant (DomainError).
+        t4 = (0.025553879796731797, 0.018355861103728575, 0.00046906346821018463)
+        p = SMLMFrameConnection.ParamStruct(); p.initial_density = [1.0]
+        p.k_on, p.k_off, p.k_bleach, p.p_miss = 0.01, 0.3, 0.01, 0.1
+        cl = [5.0 5.0 t4[1] t4[2] t4[3] 2 1 1 1; 5.001 5.0 t4[1] t4[2] t4[3] 3 1 1 2]
+        cm = SMLMFrameConnection.create_costmatrix([cl], p, 1, 5, fill(0.03, 5))
+        @test isfinite(cm[1, 2])
+        # Combining two at one position gave (NaN, NaN, Inf, Inf, Inf).
+        tb = (0.01761696674838718, 0.011928085556888963, 0.00021013668662763022)
+        o = combinelocalizations(make_test_smld([e64(5.0, 5.0, 1, tb; tid = 1),
+                                                 e64(5.0, 5.0, 2, tb; tid = 1)];
+                                                n_frames = 2)).emitters[1]
+        @test (o.x, o.y) == (5.0, 5.0)
+        @test all(isfinite, (o.σ_x, o.σ_y, o.σ_xy)) && posdef(o)
+        # Float32 rounding of the combined covariance crossed ρ = 1, so the output was
+        # refused when combined again.
+        t5 = (0.023896482f0, 0.028789306f0, 0.0006879631f0)
+        o = combinelocalizations(make_test_smld([e32(5f0, 5f0, 1, t5; tid = 1),
+                                                 e32(5f0, 5f0, 2, t5; tid = 1)];
+                                                n_frames = 2)).emitters[1]
+        @test posdef(o)
+        @test length(combinelocalizations(make_test_smld([o]; n_frames = 2)).emitters) == 1
+        # σ² underflowing in Float32 made apply_calibration loop forever.
+        tiny = BasicSMLD([e32(5f0, 5f0, 1, (1f-24, 1f-24, 0f0))], make_test_camera(), 1, 1,
+                         Dict{String,Any}())
+        r = CalibrationResult(0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 2.0, 1000, 100, 0,
+                              Float64[], Float64[], Int[],
+                              Dict{Int,Vector{NTuple{2,Float64}}}(), true, "")
+        out = SMLMFrameConnection.apply_calibration(tiny, r).emitters[1]
+        @test out.σ_x == 1f-24 && posdef(out)
+    end
+
     @testset "one zero-area precluster returns" begin
         # Two localizations of one molecule at exactly one position: the precluster's
         # bounding box has zero area. This used to give an infinite density, a NaN

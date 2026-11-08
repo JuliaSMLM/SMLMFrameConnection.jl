@@ -52,34 +52,13 @@ function estimatedensities(smld::BasicSMLD{T,E},
     # emitter using precision-weighted mean with full covariance.
     clustercenters = zeros(2, nclusters)
     for nn = 1:nclusters
-        # Isolate some arrays to improve readability.
         # Column layout: 1:x 2:y 3:σ_x 4:σ_y 5:σ_xy 6:frame ...
-        x = clusterdata[nn][:, 1]
-        y = clusterdata[nn][:, 2]
-        σ_x = clusterdata[nn][:, 3]
-        σ_y = clusterdata[nn][:, 4]
-        σ_xy = clusterdata[nn][:, 5]
-
-        # Compute the cluster centers using precision-weighted mean with full covariance.
-        # P = Σ⁻¹ = [σ_y² -σ_xy; -σ_xy σ_x²] / det where det = σ_x²σ_y² - σ_xy²
-        # Combined: center = (Σ Pᵢ)⁻¹ * Σ(Pᵢ * posᵢ)
-        P_sum = zeros(2, 2)
-        μ_weighted = zeros(2)
-        for i in eachindex(x)
-            det_i = _cov_det(σ_x[i], σ_y[i], σ_xy[i])   # > 0: the entry check holds
-            # Precision matrix elements
-            P11 = σ_y[i]^2 / det_i
-            P22 = σ_x[i]^2 / det_i
-            P12 = -σ_xy[i] / det_i
-            P_sum[1,1] += P11
-            P_sum[2,2] += P22
-            P_sum[1,2] += P12
-            P_sum[2,1] += P12
-            μ_weighted[1] += P11 * x[i] + P12 * y[i]
-            μ_weighted[2] += P12 * x[i] + P22 * y[i]
-        end
-        # Solve P_sum * center = μ_weighted
-        clustercenters[1:2, nn] = P_sum \ μ_weighted
+        # Precision-weighted mean with full covariance: center = (Σ Pᵢ)⁻¹ Σ Pᵢ posᵢ
+        c = clusterdata[nn]
+        μx, μy, _, _, _ = _precision_mean(view(c, :, 1), view(c, :, 2), view(c, :, 3),
+                                          view(c, :, 4), view(c, :, 5), axes(c, 1))
+        clustercenters[1, nn] = μx
+        clustercenters[2, nn] = μy
     end
 
     # Estimate the local cluster density based on the distance to
