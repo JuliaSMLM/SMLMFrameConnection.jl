@@ -89,6 +89,18 @@ end
         @test (a.x, a.y, a.σ_x, a.frame, a.id) == (b.x, b.y, b.σ_x, b.frame, b.id)
     end
 
+    @testset "ties on (dataset, frame, x, y) do not fall back to input order" begin
+        # Two frame-1 localizations at one position (photons 100 and 1000) and one in
+        # frame 2 nearby: which of the tied pair links to frame 2 followed the input
+        # order (combined photons [500, 1000] one way, [100, 1400] the other).
+        a = make_emitter(5.0, 5.0, 1; photons = 100.0)
+        b = make_emitter(5.0, 5.0, 1; photons = 1000.0)
+        c = make_emitter(5.001, 5.001, 2; photons = 400.0)
+        out(es) = sort([(e.photons, e.x, e.y, e.σ_x, e.frame)
+                        for e in frameconnect(make_test_smld(es; n_frames = 2))[1].emitters])
+        @test out([a, b, c]) == out([b, a, c]) == out([c, b, a])
+    end
+
     @testset "precluster joins every cluster a localization links to" begin
         # sigma 10 nm, threshold 5 * (10 + 10) nm = 0.1 um. A (x 1.00, 0.98) and B
         # (x 1.15, 1.17) in frames 1-2; C at x 1.075 in frame 3 lies within 0.1 um of

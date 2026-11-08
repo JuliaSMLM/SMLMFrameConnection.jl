@@ -32,12 +32,10 @@ function combinelocalizations(smld::BasicSMLD{T,E};
     # below (`first(emitters)`) assume at least one localization.
     isempty(emitters) && return smld
     connectID = [e.track_id for e in emitters]
-    # Order by (track, dataset, frame, x, y), so the result does not depend on the
-    # input order: each combined localization takes frame, dataset and id from its
-    # track's first localization in time.
-    sortindices = sortperm(collect(zip(connectID, (e.dataset for e in emitters),
-                                       (e.frame for e in emitters),
-                                       (e.x for e in emitters), (e.y for e in emitters))))
+    # Order by (track, dataset, frame, x, y), ties broken by the other fields, so the
+    # result does not depend on the input order: each combined localization takes frame,
+    # dataset and id from its track's first localization in time.
+    sortindices = sortperm(emitters; by = e -> (e.track_id, _order_key(e)))
     connectID = connectID[sortindices]
     x = [e.x for e in emitters][sortindices]
     y = [e.y for e in emitters][sortindices]
@@ -96,6 +94,22 @@ function combinelocalizations(smld::BasicSMLD{T,E};
     for (out_idx, nn) in enumerate(keep)
         indices = (1:nperID[nn]) .+ ncumulative[nn]
 
+        # A group of one (an unlinked localization, or a one-localization track) is its
+        # own combination: copied, not round-tripped through the precision matrix.
+        if nperID[nn] == 1
+            i = indices[1]
+            x_combined[out_idx], y_combined[out_idx] = x[i], y[i]
+            σ_x_combined[out_idx], σ_y_combined[out_idx] = σ_x[i], σ_y[i]
+            σ_xy_combined[out_idx] = σ_xy[i]
+            photons_combined[out_idx], σ_photons_combined[out_idx] = photons[i], σ_photons[i]
+            bg_combined[out_idx], σ_bg_combined[out_idx] = bg[i], σ_bg[i]
+            connectID_combined[out_idx] = connectID[i]
+            framenum_combined[out_idx] = framenum[i]
+            datasetnum_combined[out_idx] = datasetnum[i]
+            id_combined[out_idx] = id[i]
+            continue
+        end
+
         # Combine positions using precision-weighted mean with full 2x2 covariance.
         # For each measurement i: Σᵢ = [σ_x² σ_xy; σ_xy σ_y²], Pᵢ = Σᵢ⁻¹
         # Combined: Σ_comb = (Σ Pᵢ)⁻¹, pos_comb = Σ_comb * Σ(Pᵢ * posᵢ)
@@ -107,8 +121,7 @@ function combinelocalizations(smld::BasicSMLD{T,E};
             sx2 = Float64(σ_x[i])^2
             sy2 = Float64(σ_y[i])^2
             sxy = Float64(σ_xy[i])
-            det_i = sx2 * sy2 - sxy^2
-            det_i = max(det_i, eps(Float64))  # Ensure positive definite
+            det_i = _cov_det(σ_x[i], σ_y[i], σ_xy[i])   # > 0: the entry check holds
             # Precision matrix: P = [σ_y² -σ_xy; -σ_xy σ_x²] / det
             P11 = sy2 / det_i
             P22 = sx2 / det_i

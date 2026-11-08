@@ -12,11 +12,12 @@ uncertainties before track combination: `Σ_corrected = σ_motion² I + k² Σ_C
 # Fields
 - `clamp_k_to_one::Bool=true`: Hold k_scale ≥ 1.0 (CRLB is a lower bound); when the fit gives
   k < 1, the motion term is refit with k = 1
-- `filter_high_chi2::Bool=false`: Filter tracks with high chi² pairs before fitting. The chi² here
-  uses the uncalibrated CRLB, so this filter removes the tracks that show a too-small CRLB and
-  pulls `k_scale` toward 1; the fit itself already leaves out mismatched pairs (see
+- `filter_high_chi2::Bool=false`: Deprecated and ignored (`true` logs a warning). It dropped
+  tracks with a pair chi² above `chi2_filter_threshold` under the uncalibrated CRLB, which
+  are the tracks that show k > 1, so it biased `k_scale` toward 1 (on SMLMSim data with
+  true k 1.5 it gave 1.05). The fit itself leaves out mismatched pairs (see
   [`CalibrationResult`](@ref)).
-- `chi2_filter_threshold::Float64=6.0`: Chi² threshold for track filtering (per pair)
+- `chi2_filter_threshold::Float64=6.0`: Deprecated and ignored, with `filter_high_chi2`
 """
 Base.@kwdef struct CalibrationConfig <: SMLMData.AbstractSMLMConfig
     clamp_k_to_one::Bool = true
@@ -36,8 +37,8 @@ localizations, `CRLB_var` the sum of their per-axis CRLB variances, so the inter
 `A = 2σ_motion²` (each localization carries its own motion/vibration jitter) and
 `B = k²` (CRLB scale factor).
 
-The fit leaves out pairs whose chi² under the current fit exceeds the chi²(2) 99.7% point
-(mismatched pairs), corrects the truncated bin means for the variance the cut removes, and
+The fit leaves out pairs whose chi² under the current fit (with the pair's full covariance,
+σ_xy included) exceeds the chi²(2) 99.7% point (mismatched pairs), corrects the truncated bin means for the variance the cut removes, and
 iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when the model holds.
 
 # Fields
@@ -45,14 +46,16 @@ iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when th
 - `k_scale::Float64`: Applied CRLB scale factor (√B_applied)
 - `A::Float64`: Intercept of the free two-parameter fit (pair-difference variance 2σ_motion², in μm²); can be negative
 - `B::Float64`: Slope of the free two-parameter fit (k²); below 1 when the clamp binds. The
-  line `A + B * bin_centers` goes through `bin_observed`
+  line `A + B * bin_centers` goes through `bin_observed`. When the reported precisions
+  fill fewer than 3 bins there is no free fit, and `A`, `B`, their errors, R² and the bins
+  are those of the applied one-parameter fit (`warning` says so)
 - `A_sigma::Float64`: Standard error of A
 - `B_sigma::Float64`: Standard error of B
-- `r_squared::Float64`: R² of the WLS fit
-- `mean_chi2::Float64`: Mean chi² across all frame-to-frame pairs
+- `r_squared::Float64`: Weighted R² of the WLS fit (about the weighted mean); NaN for one bin
+- `mean_chi2::Float64`: Mean chi² (full pair covariance, uncalibrated CRLB) across all frame-to-frame pairs
 - `n_pairs::Int`: Number of frame-to-frame pairs used in the final fit (after the chi² cut)
 - `n_tracks_used::Int`: Number of tracks contributing pairs
-- `n_tracks_filtered::Int`: Number of tracks removed by chi² filter
+- `n_tracks_filtered::Int`: Always 0 (the deprecated track filter is ignored)
 - `bin_centers::Vector{Float64}`: Bin centers (CRLB variance) for diagnostic plots
 - `bin_observed::Vector{Float64}`: Bin observed variance (truncation-corrected) of the free fit, for diagnostic plots
 - `bin_counts::Vector{Int}`: Number of pairs per bin (parallel to bin_centers/bin_observed); use to grey/drop low-statistics bins in diagnostic plots
@@ -134,12 +137,6 @@ Configuration parameters for frame connection algorithm.
 # With calibration
 config = FrameConnectConfig(calibration=CalibrationConfig())
 (combined, info) = frameconnect(smld, config)
-
-# With calibration + chi2 filtering
-config = FrameConnectConfig(
-    calibration=CalibrationConfig(filter_high_chi2=true, chi2_filter_threshold=4.0)
-)
-(combined, info) = frameconnect(smld, config)
 ```
 """
 Base.@kwdef struct FrameConnectConfig <: AbstractSMLMConfig
@@ -193,25 +190,28 @@ end
 ParamStruct() = ParamStruct([], 2, 0.0, 0.0, 0.0, 0.0, 5.0, 5, 2)
 
 """
-    to_emitter2dfit(e::AbstractEmitter, track_id::Int) -> Emitter2DFit
-
-Convert any AbstractEmitter to Emitter2DFit with specified track_id.
-Used internally to support different input emitter types while producing
-consistent Emitter2DFit output.
-"""
-function to_emitter2dfit(e::SMLMData.AbstractEmitter, track_id::Int)
-    T = typeof(e.x)
-    SMLMData.Emitter2DFit{T}(
-        e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy, e.σ_photons, e.σ_bg,
-        e.frame, e.dataset, track_id, e.id
-    )
-end
-"""
     _check_2d(smld, fname)
 
 Throw an `ArgumentError` if any localization in `smld` carries a z coordinate. Frame
 connection is 2D: it builds `Emitter2DFit` output and would silently drop z and σ_z.
 """
+# Determinant σ_x²σ_y² - σ_xy² of a localization covariance, in Float64 as
+# (σ_xσ_y - σ_xy)(σ_xσ_y + σ_xy): the product of two Float32 values is exact in Float64,
+# so the sign is exact for Float32 input, and the factored form keeps it accurate when
+# |σ_xy| is close to σ_xσ_y. Every determinant in the package goes through here, so a
+# covariance that passes the entry check has a positive determinant everywhere.
+function _cov_det(σx, σy, σxy)
+    p = Float64(σx) * Float64(σy)
+    q = abs(Float64(σxy))
+    return (p - q) * (p + q)
+end
+
+# Total order over every field of a localization, used to sort before the pipeline:
+# localizations that tie on (dataset, frame, x, y) are ordered by their other fields,
+# not by their place in the input; ones equal in every field are interchangeable.
+_order_key(e) = (e.dataset, e.frame, e.x, e.y, e.σ_x, e.σ_y, e.σ_xy, e.photons, e.bg,
+                 e.σ_photons, e.σ_bg, e.id, e.track_id)
+
 function _check_2d(smld::BasicSMLD, fname::AbstractString)
     if any(e -> hasproperty(e, :z), smld.emitters)
         throw(ArgumentError("$fname: the localizations carry z " *
@@ -240,7 +240,7 @@ function _check_inputs(smld::BasicSMLD, fname::AbstractString; frames::Bool = tr
         (isfinite(e.σ_x) && isfinite(e.σ_y) && e.σ_x > 0 && e.σ_y > 0) ||
             throw(ArgumentError("$fname: localization $i has σ_x = $(e.σ_x), " *
                                 "σ_y = $(e.σ_y); both must be finite and > 0"))
-        (isfinite(e.σ_xy) && e.σ_xy^2 < e.σ_x^2 * e.σ_y^2) ||
+        (isfinite(e.σ_xy) && _cov_det(e.σ_x, e.σ_y, e.σ_xy) > 0) ||
             throw(ArgumentError("$fname: localization $i has σ_xy = $(e.σ_xy); the " *
                                 "covariance must satisfy σ_xy² < σ_x²·σ_y²"))
         if frames

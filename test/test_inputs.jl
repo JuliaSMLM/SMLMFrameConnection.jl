@@ -1,6 +1,8 @@
 using Test, SMLMFrameConnection, SMLMData
 include("test_helpers.jl")
 
+using Random
+
 @testset "Input checks and degenerate inputs" begin
     @testset "3D localizations are refused, not flattened" begin
         # x and y both vary, so the fixture is not also a zero-area precluster.
@@ -51,6 +53,69 @@ include("test_helpers.jl")
         out = combinelocalizations(make_test_smld(em; n_frames = 2, n_datasets = 2)).emitters
         @test length(out) == 2
         @test sort([e.dataset for e in out]) == [1, 2]
+    end
+
+    @testset "a positive-definite Float32 covariance is accepted" begin
+        # σ_xy just below σ_xσ_y: positive definite (exact determinant 3.5e-15), but
+        # σ_xy² and σ_x²σ_y² rounded equal in Float32 and the entry check refused it.
+        sx, sy, sxy = 0.03f0, 0.02f0, 0.00059999997f0
+        @test Float64(sxy) < Float64(sx) * Float64(sy)          # the case under test
+        em = [Emitter2DFit{Float32}(5f0 + 0.002f0 * i, 5f0, 1000f0, 10f0, sx, sy, sxy,
+                                    30f0, 3f0, i, 1, 0, 0) for i in 1:4]
+        smld = BasicSMLD(em, make_test_camera(), 4, 1, Dict{String,Any}())
+        combined, info = frameconnect(smld)
+        @test info.n_input == 4
+        @test all(e -> isfinite(e.x) && isfinite(e.σ_x), combined.emitters)
+        # Singular in exact arithmetic (σ_xy = σ_xσ_y exactly) is still refused.
+        sing = [Emitter2DFit{Float32}(5f0 + 0.002f0 * i, 5f0, 1000f0, 10f0, 0.5f0, 0.25f0,
+                                      0.125f0, 30f0, 3f0, i, 1, 0, 0) for i in 1:2]
+        @test_throws ArgumentError frameconnect(BasicSMLD(sing, make_test_camera(), 2, 1,
+                                                          Dict{String,Any}()))
+    end
+
+    @testset "apply_calibration keeps covariances positive definite" begin
+        # A correlation as close to 1 as Float32 holds, scaled by k² and rounded back to
+        # Float32, crossed 1 in about 7% of cases; combinelocalizations then refused
+        # the calibrated data.
+        Random.seed!(11)
+        em = Emitter2DFit{Float32}[]
+        for i in 1:2000
+            sx, sy = Float32(0.005 + 0.03rand()), Float32(0.005 + 0.03rand())
+            sxy = prevfloat(Float32(Float64(sx) * Float64(sy)))
+            while Float64(sxy) >= Float64(sx) * Float64(sy)
+                sxy = prevfloat(sxy)
+            end
+            push!(em, Emitter2DFit{Float32}(5f0, 5f0, 1000f0, 10f0, sx, sy, sxy, 30f0, 3f0,
+                                            1, 1, i, i))
+        end
+        smld = BasicSMLD(em, make_test_camera(), 1, 1, Dict{String,Any}())
+        for ksq in (1.21, 1.4217910694289009, 2.0)
+            r = CalibrationResult(0.0, sqrt(ksq), 0.0, ksq, 0.0, 0.0, 1.0, 2.0, 1000, 100, 0,
+                                  Float64[], Float64[], Int[],
+                                  Dict{Int,Vector{NTuple{2,Float64}}}(), true, "")
+            cal = SMLMFrameConnection.apply_calibration(smld, r)
+            @test all(e -> abs(Float64(e.σ_xy)) < Float64(e.σ_x) * Float64(e.σ_y), cal.emitters)
+        end
+    end
+
+    @testset "a group of one keeps its covariance; small σ is not floored" begin
+        # σ = 0.1 nm: σ_x²σ_y² = 1e-16 μm⁴ fell below an absolute floor eps() = 2.2e-16,
+        # so a lone localization came back with σ 0.149 nm and a pair of them with
+        # 0.105 nm instead of 0.0707 nm.
+        em = [make_emitter(5.0, 5.0, 1; σ_pos = 1e-4),
+              make_emitter(6.0, 6.0, 1; σ_pos = 1e-4, track_id = 1),
+              make_emitter(6.0, 6.0, 2; σ_pos = 1e-4, track_id = 1)]
+        out = sort(combinelocalizations(make_test_smld(em; n_frames = 2)).emitters;
+                   by = e -> e.track_id)
+        @test out[1].σ_x == 1e-4 && out[1].σ_y == 1e-4 && out[1].σ_xy == 0.0
+        @test out[2].σ_x ≈ 1e-4 / sqrt(2) rtol = 1e-12
+        @test out[2].σ_y ≈ 1e-4 / sqrt(2) rtol = 1e-12
+        # A lone Float32 localization comes back bit for bit.
+        e32 = Emitter2DFit{Float32}(5.1f0, 4.9f0, 1000f0, 10f0, 0.013f0, 0.011f0, 2f-5,
+                                    30f0, 3f0, 1, 1, 0, 0)
+        o32 = combinelocalizations(BasicSMLD([e32], make_test_camera(), 1, 1,
+                                             Dict{String,Any}())).emitters[1]
+        @test (o32.x, o32.y, o32.σ_x, o32.σ_y, o32.σ_xy) == (e32.x, e32.y, e32.σ_x, e32.σ_y, e32.σ_xy)
     end
 
     @testset "one zero-area precluster returns" begin

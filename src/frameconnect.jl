@@ -98,9 +98,10 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
         return (smld, info)
     end
 
-    # Run the pipeline on a copy sorted by (dataset, frame, x, y), so the result does
-    # not depend on the order of the input; track IDs are mapped back to input order.
-    perm = sortperm(smld.emitters; by = e -> (e.dataset, e.frame, e.x, e.y))
+    # Run the pipeline on a copy sorted by (dataset, frame, x, y), ties broken by the
+    # other fields, so the result does not depend on the order of the input; track IDs
+    # are mapped back to input order.
+    perm = sortperm(smld.emitters; by = _order_key)
     smld_sorted = BasicSMLD(smld.emitters[perm], smld.camera, smld.n_frames,
                             smld.n_datasets, smld.metadata)
 

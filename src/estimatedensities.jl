@@ -66,8 +66,7 @@ function estimatedensities(smld::BasicSMLD{T,E},
         P_sum = zeros(2, 2)
         μ_weighted = zeros(2)
         for i in eachindex(x)
-            det_i = σ_x[i]^2 * σ_y[i]^2 - σ_xy[i]^2
-            det_i = max(det_i, eps())  # Ensure positive definite
+            det_i = _cov_det(σ_x[i], σ_y[i], σ_xy[i])   # > 0: the entry check holds
             # Precision matrix elements
             P11 = σ_y[i]^2 / det_i
             P22 = σ_x[i]^2 / det_i

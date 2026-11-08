@@ -81,8 +81,8 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float64}},
         deltaframe_future = min(max_frame_gap, nframes - frm)
         # Localization uncertainty ellipse area (μm²) to make density dimensionless
         # Area = π√det(Σ) where det(Σ) = σ_x²σ_y² - σ_xy²
-        det_loc = x_se[nn]^2 * y_se[nn]^2 - xy_cov[nn]^2
-        loc_area = pi * sqrt(max(det_loc, eps()))
+        det_loc = _cov_det(x_se[nn], y_se[nn], xy_cov[nn])   # > 0: the entry check holds
+        loc_area = pi * sqrt(det_loc)
         rho_off_f = rho_0 * base_rho_on[frm] * k_off / k_on
         rho_on_past = rho_0 * base_rho_on[frm - deltaframe_past]
         birthcost = -log(1-p_miss) -

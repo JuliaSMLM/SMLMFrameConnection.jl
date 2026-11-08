@@ -20,9 +20,12 @@ end
     # apply_noise: the CRLB part with σ_psf (σ = σ_psf/√N), then, if σ_motion > 0, a
     # motion jitter of σ_motion per localization (drawn with photons = 1 so the draw
     # has exactly that σ). The σ_x, σ_y written to the data are the true CRLB divided
-    # by k, so the data's CRLB is k times too small.
+    # by k, so the data's CRLB is k times too small. With ρ ≠ 0 the data are read in a
+    # sheared coordinate frame, x' = x, y' = ρx + √(1-ρ²)y, applied to SMLMSim's
+    # localizations before the motion jitter: the CRLB covariance then has correlation
+    # ρ (σ_x' = σ_y' = σ, σ_xy' = ρσ²) and the motion stays isotropic.
     function calibration_fixture(; k, σ_motion, ntracks = 2000, nframes = 6, seed = 1,
-                                 photons = (20.0, 400.0))
+                                 photons = (20.0, 400.0), ρ = 0.0)
         Random.seed!(seed)
         cam = make_test_camera()
         model = Emitter2DFit{Float64}[]
@@ -36,7 +39,10 @@ end
             end
         end
         smld = SMLMSim.apply_noise(BasicSMLD(model, cam, nframes, 1, Dict{String,Any}()), 0.13)
-        em = smld.emitters
+        c = sqrt(1 - ρ^2)
+        em = [Emitter2DFit{Float64}(e.x, ρ * e.x + c * e.y, e.photons, e.bg, e.σ_x, e.σ_y,
+                                    ρ * e.σ_x * e.σ_y, 1.0, 1.0, e.frame, e.dataset,
+                                    e.track_id, e.id) for e in smld.emitters]
         if σ_motion > 0
             unit = [Emitter2DFit{Float64}(e.x, e.y, 1.0, e.bg, e.σ_x, e.σ_y, 0.0, 1.0, 1.0,
                                           e.frame, e.dataset, e.track_id, e.id) for e in em]
@@ -45,8 +51,8 @@ end
         else
             jittered = em
         end
-        out = [Emitter2DFit{Float64}(j.x, j.y, e.photons, e.bg, e.σ_x / k, e.σ_y / k, 0.0,
-                                     1.0, 1.0, e.frame, e.dataset, e.track_id, e.id)
+        out = [Emitter2DFit{Float64}(j.x, j.y, e.photons, e.bg, e.σ_x / k, e.σ_y / k,
+                                     e.σ_xy / k^2, 1.0, 1.0, e.frame, e.dataset, e.track_id, e.id)
                for (e, j) in zip(em, jittered)]
         return BasicSMLD(out, cam, nframes, 1, Dict{String,Any}())
     end
@@ -169,6 +175,71 @@ end
                 @test abs(applied / (σm^2 + σ^2) - 1) < tol
             end
         end
+    end
+
+    @testset "correlated CRLB covariances (σ_xy ≠ 0)" begin
+        # The cut ignored σ_xy: its statistic was not chi²(2), more pairs fell past it
+        # than the truncation factor assumes, and k came out low (1.85 for a true 2 at
+        # ρ = 0.99; the uncorrelated control gives 1.99).
+        cfg = CalibrationConfig(clamp_k_to_one = false)
+        for (σm, tol) in ((0.0, 0.06), (0.004, 0.08))
+            r = SMLMFrameConnection.analyze_calibration(
+                    calibration_fixture(k = 2.0, σ_motion = σm, ρ = 0.99), cfg)
+            @test r.calibration_applied
+            @test abs(r.k_scale - 2.0) < tol
+            # A trial fit with σ_motion² < 0 must not make the cut covariance
+            # indefinite (that cut every pair and lost the free fit).
+            @test !occursin("no free fit", r.warning)
+        end
+    end
+
+    @testset "one reported precision: the one-parameter fits still apply" begin
+        # Every localization has the same CRLB: no free fit exists (one bin), and the
+        # calibration fell back to the identity with "Too few valid bins". Either
+        # one-parameter fit gives the right variance at that σ.
+        for (k, σm) in ((2.0, 0.0), (1.0, 0.010))
+            smld = calibration_fixture(k = k, σ_motion = σm, photons = (100.0, 100.0))
+            σ = smld.emitters[1].σ_x
+            @test all(e -> e.σ_x == σ, smld.emitters)   # the case under test
+            r = SMLMFrameConnection.analyze_calibration(smld,
+                    CalibrationConfig(clamp_k_to_one = false))
+            @test r.calibration_applied
+            @test occursin("no free fit", r.warning)
+            applied = (r.sigma_motion_nm / 1000)^2 + r.k_scale^2 * σ^2
+            @test abs(applied / (σm^2 + k^2 * σ^2) - 1) < 0.03
+        end
+    end
+
+    @testset "an applied calibration keeps at least 100 pairs" begin
+        # Exactly 100 pairs: the free fit kept all 100, then a refit (bound or
+        # one-parameter) ran its own cut and applied the calibration from 99 or fewer.
+        cfg = CalibrationConfig(clamp_k_to_one = false)
+        napplied = 0
+        for seed in 1:30
+            r = SMLMFrameConnection.analyze_calibration(
+                    calibration_fixture(k = 1.5, σ_motion = 0.0, ntracks = 100, nframes = 2,
+                                        seed = seed), cfg)
+            r.calibration_applied || continue
+            napplied += 1
+            @test r.n_pairs >= 100
+        end
+        @test napplied > 0
+    end
+
+    @testset "R² is weighted about the weighted mean" begin
+        # Three bins (reported 10, 20, 30; observed 1000, 1000, 1100; 100 pairs each).
+        # The weighted R² used the unweighted mean of the bins: 0.7957 for 0.6231.
+        reported = repeat([10.0, 20.0, 30.0]; inner = 100)
+        observed = repeat([1000.0, 1000.0, 1100.0]; inner = 100)
+        bin_of = repeat([1, 2, 3]; inner = 100)
+        fit = SMLMFrameConnection._binned_wls(reported, observed, bin_of, trues(300), 3, 0.0, 1.0)
+        c, o = [10.0, 20.0, 30.0], [1000.0, 1000.0, 1100.0]
+        w = 1 ./ c .^ 2                      # model weights n/v², v = A + B·c = c
+        X = hcat(ones(3), c)
+        β = (X' * (w .* X)) \ (X' * (w .* o))
+        r2 = 1 - sum(w .* (o .- X * β) .^ 2) / sum(w .* (o .- sum(w .* o) / sum(w)) .^ 2)
+        @test fit.r_squared ≈ r2
+        @test fit.r_squared ≈ 0.6231 atol = 1e-4
     end
 
     @testset "A and B report the free fit; the applied values are separate" begin
@@ -303,7 +374,7 @@ end
     @testset "apply_calibration with sigma_xy" begin
         e = Emitter2DFit{Float64}(
             5.0, 5.0, 1000.0, 10.0,
-            0.02, 0.03, 0.001,
+            0.02, 0.03, 0.0003,           # covariance, < σ_x σ_y = 0.0006
             31.6, 3.16,
             1, 1, 1, 0
         )
@@ -321,8 +392,14 @@ end
 
         smld_cal = SMLMFrameConnection.apply_calibration(smld, result)
 
-        expected_σxy = 2.0^2 * 0.001
+        expected_σxy = 2.0^2 * 0.0003
         @test smld_cal.emitters[1].σ_xy ≈ expected_σxy atol=1e-10
+        # apply_calibration returns on any input (a stepping loop never finished on
+        # this non-positive-definite covariance, σ_xy 0.001 > σ_x σ_y 0.0006).
+        bad = Emitter2DFit{Float64}(5.0, 5.0, 1000.0, 10.0, 0.02, 0.03, 0.001,
+                                    31.6, 3.16, 1, 1, 1, 0)
+        out = SMLMFrameConnection.apply_calibration(make_test_smld([bad]; n_frames=1), result)
+        @test out.emitters[1].σ_xy ≈ 2.0^2 * 0.001 atol=1e-10
     end
 
     @testset "apply_calibration skips when not applied" begin
@@ -386,49 +463,19 @@ end
         @test length(combined_cal.emitters) > 0
     end
 
-    @testset "chi2 track filtering" begin
-        # Pre-assigned track_ids so we control exactly which tracks are outliers
-        emitters = Emitter2DFit{Float64}[]
-
-        # 150 normal tracks: positions barely move between frames, varying σ
-        for t in 1:150
-            x, y = 5.0 + t * 0.3, 5.0 + t * 0.2
-            σ = 0.01 + 0.03 * (t / 150)  # σ varies from 0.01 to 0.04
-            for f in 1:4
-                # Tiny deterministic offset per frame
-                dx = 0.001 * ((f % 3) - 1)
-                push!(emitters, Emitter2DFit{Float64}(
-                    x + dx, y + dx,
-                    1000.0, 10.0, σ, σ, 0.0, 31.6, 3.16,
-                    f, 1, t, 0
-                ))
-            end
+    @testset "the deprecated chi² track filter is ignored" begin
+        # The filter dropped tracks with a pair chi² above the threshold under the
+        # uncalibrated CRLB: the tracks that show k > 1. True k 1.5 gave k 1.05 at threshold
+        # 6 (0.89 at 4) on this fixture.
+        smld = calibration_fixture(k = 1.5, σ_motion = 0.0)
+        off = SMLMFrameConnection.analyze_calibration(smld, CalibrationConfig())
+        on = @test_logs (:warn, r"filter_high_chi2") match_mode = :any begin
+            SMLMFrameConnection.analyze_calibration(smld,
+                CalibrationConfig(filter_high_chi2 = true, chi2_filter_threshold = 6.0))
         end
-
-        # 10 outlier tracks: huge jump in frame 3
-        for t in 1:10
-            tid = 150 + t
-            x, y = 5.0 + tid * 0.3, 5.0 + tid * 0.2
-            σ = 0.015
-            for f in 1:4
-                jump = f >= 3 ? 5.0 : 0.0  # 5 μm jump = chi2 >> 6
-                push!(emitters, Emitter2DFit{Float64}(
-                    x + jump, y,
-                    1000.0, 10.0, σ, σ, 0.0, 31.6, 3.16,
-                    f, 1, tid, 0
-                ))
-            end
-        end
-
-        smld = make_test_smld(emitters; n_frames=4)
-
-        config_no_filter = CalibrationConfig(filter_high_chi2=false)
-        result_no_filter = SMLMFrameConnection.analyze_calibration(smld, config_no_filter)
-
-        config_filter = CalibrationConfig(filter_high_chi2=true, chi2_filter_threshold=6.0)
-        result_filter = SMLMFrameConnection.analyze_calibration(smld, config_filter)
-
-        @test result_filter.n_tracks_filtered > 0
-        @test result_filter.n_pairs < result_no_filter.n_pairs
+        @test abs(on.k_scale - 1.5) < 0.05
+        @test (on.k_scale, on.sigma_motion_nm, on.n_pairs) ==
+              (off.k_scale, off.sigma_motion_nm, off.n_pairs)
+        @test on.n_tracks_filtered == 0
     end
 end
