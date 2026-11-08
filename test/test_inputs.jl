@@ -171,6 +171,16 @@ using Random
                                                       [1e16, 1.0], zeros(2), idx)[1:2]
         @test pm(1:2) == (1.0, 1.0)
         @test pm([2, 1]) == (1.0, 1.0)
+        # Anchoring both coordinates at the localization with the largest total precision
+        # lost the other's precise x: (x 1, σ (1, 2)) and (x 1e16, σ (1e16, 0.5)) gave x 0.
+        # Each coordinate now has its own anchor.
+        q = SMLMFrameConnection._precision_mean([1.0, 1e16], [0.0, 0.0], [1.0, 1e16],
+                                                [2.0, 0.5], zeros(2), 1:2)
+        @test q[1] == 1.0 && q[2] == 0.0
+        # Identical covariances at coordinates near the Float64 limit: the mean is finite.
+        r = SMLMFrameConnection._precision_mean([0.0, 1e308, 1e308], fill(5.0, 3),
+                                                fill(1e4, 3), fill(1e4, 3), zeros(3), 1:3)
+        @test isfinite(r[1]) && r[1] ≈ (1e308 / 3) * 2
         # Identical covariances, nearly singular: the mean is the arithmetic mean (the
         # precision form returned the second position).
         e(x, y, f) = Emitter2DFit{Float64}(x, y, 1000.0, 10.0, 0.03, 0.02, 0.0006, 30.0, 3.0,
