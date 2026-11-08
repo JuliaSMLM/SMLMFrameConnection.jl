@@ -132,12 +132,13 @@ end
         end
     end
 
-    @testset "applied variance matches the truth when a bound binds" begin
+    @testset "applied variance matches the truth (bounds, narrow ranges)" begin
         # Per-localization variance the calibration applies at the median reported σ,
         # against the truth σ_motion² + k²·σ². A bound that binds (σ_motion² ≥ 0, or
         # k ≥ 1 with the clamp) refits the other parameter; keeping the jointly fitted
         # value instead gave 1.0-2.0 times the truth on these fixtures.
         cases = ((k = 1.0, σm = 0.0, photons = (50.0, 55.0)),
+                 (k = 1.5, σm = 0.005, photons = (50.0, 55.0)),   # split not separable
                  (k = 1.5, σm = 0.005, photons = (20.0, 400.0)))
         for c in cases, seed in 1:10, clamp in (true, false)
             smld = calibration_fixture(k = c.k, σ_motion = c.σm, photons = c.photons, seed = seed)
@@ -146,6 +147,7 @@ end
             σ = median(e.σ_x for e in smld.emitters)
             applied = r.calibration_applied ? (r.sigma_motion_nm / 1000)^2 + r.k_scale^2 * σ^2 : σ^2
             truth = c.σm^2 + c.k^2 * σ^2
+            @test r.calibration_applied
             @test abs(applied / truth - 1) < 0.10
         end
     end

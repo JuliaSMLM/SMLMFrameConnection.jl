@@ -59,8 +59,9 @@ iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when th
 - `bin_counts::Vector{Int}`: Number of pairs per bin (parallel to bin_centers/bin_observed); use to grey/drop low-statistics bins in diagnostic plots
 - `frame_shifts::Dict{Int, Vector{NTuple{2,Float64}}}`: Per-dataset (dx,dy) shifts for jitter plots
 - `calibration_applied::Bool`: Whether calibration was actually applied (false on fallback)
-- `warning::String`: Why calibration fell back (too few pairs or bins, a poor fit, or a slope
-  B not positive and at least 3 standard errors), or that the fit did not converge (empty if OK)
+- `warning::String`: Why calibration fell back (too few pairs or bins, or no positive,
+  determined scale), that the CRLB scale was fit alone because motion and scale were not
+  separable, or that the fit did not converge (empty if OK)
 """
 struct CalibrationResult
     sigma_motion_nm::Float64

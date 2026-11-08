@@ -132,10 +132,11 @@ pair carry motion jitter) and `B = k²`. Pairs whose chi² under the current fit
 the chi²(2) 99.7% point are left out as mismatches; the truncated bin means are
 corrected for the variance the cut removes, and the fit iterates to convergence.
 
-Falls back gracefully (returns `calibration_applied=false`) if fewer than 100
-frame-to-frame pairs are available, if the fit quality is poor (R² < 0.1), or if the
-slope `B` is not positive and at least 3 standard errors (the reported precisions span
-too narrow a range to separate the CRLB scale from the motion term).
+When the free fit cannot separate the two terms (slope not positive and at least 3
+standard errors, or R² < 0.1, as when the reported precisions span a narrow range), the
+CRLB scale is fit alone with σ_motion = 0 and `warning` says so. Falls back gracefully
+(returns `calibration_applied=false`) if fewer than 100 frame-to-frame pairs are
+available or no positive, determined scale can be fit.
 """
 function analyze_calibration(smld::BasicSMLD{T,E},
                              config::CalibrationConfig) where {T, E<:SMLMData.AbstractEmitter}
@@ -273,7 +274,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     # Start from the median: with A = 0, chi²/B is chi²(2), whose median is 2·log(2).
     z_raw = dx2_nm2 ./ max.(vx_nm2, eps()) .+ dy2_nm2 ./ max.(vy_nm2, eps())
     A = 0.0
-    B = median(z_raw) / (2 * log(2))
+    B = median(z_raw) / (2 * log(2))   # start; also the scale-only refit's start if needed
 
     iter(A0, B0; kw...) = _iterate_calibration(reported_all, observed_all, bin_of, n_bins,
                                                vx_nm2, vy_nm2, dx2_nm2, dy2_nm2, A0, B0; kw...)
@@ -284,24 +285,33 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     fit isa String && return fallback(fit, count(keep))
     count(keep) < 100 &&
         return fallback("Too few pairs after chi² pair filtering ($(count(keep)) < 100)", count(keep))
-    fit.r_squared < 0.1 &&
-        return fallback("Poor fit quality (R² = $(round(fit.r_squared, digits=3)))", count(keep))
 
-    # Bounds: σ_motion² ≥ 0, and with `clamp_k_to_one` also k ≥ 1. When a bound binds,
-    # the other parameter is refit with the bound held: keeping the value fitted jointly
-    # with the out-of-bound one moves the applied variance away from the data.
-    if fit.A < 0
-        fit, keep, conv = iter(0.0, fit.B; fixA = 0.0)
+    # The free fit separates a motion term from the CRLB scale only when its slope is
+    # positive and determined (B > 0, B ≥ 3 standard errors, R² ≥ 0.1). When the
+    # reported precisions span a narrow range, intercept and slope trade off and the
+    # free fit can land on any slope, including a negative one with a large intercept.
+    # There the two terms are indistinguishable, so the CRLB scale is fit alone
+    # (σ_motion = 0), which still matches the observed variance. A free fit with A < 0
+    # is refit the same way: the bound σ_motion² ≥ 0 binds, and keeping the slope fitted
+    # jointly with the negative intercept moves the applied variance away from the data.
+    determined = fit.B > 0 && fit.B >= _CAL_MIN_SLOPE_SIGNIF * fit.B_sigma &&
+                 fit.r_squared >= 0.1
+    note = ""
+    if !determined || fit.A < 0
+        if !determined
+            note = "Motion and CRLB scale not separable (free fit: B = " *
+                   "$(round(fit.B, sigdigits=3)) ± $(round(fit.B_sigma, sigdigits=3)), " *
+                   "R² = $(round(fit.r_squared, digits=3)); the reported precisions may span " *
+                   "too narrow a range); fit the CRLB scale alone with σ_motion = 0"
+        end
+        fit, keep, conv = iter(0.0, fit.B > 0 ? fit.B : B; fixA = 0.0)
         converged &= conv
         fit isa String && return fallback(fit, count(keep))
-    end
-    # The slope must be positive and determined: when the reported precisions span a
-    # narrow range, intercept and slope trade off and the fit can land on any slope,
-    # including a negative one with a large intercept (k = 0 and a large motion term).
-    if !(fit.B > 0 && fit.B >= _CAL_MIN_SLOPE_SIGNIF * fit.B_sigma)
-        return fallback("CRLB scale not determined: slope B = $(round(fit.B, sigdigits=3)) " *
-                        "± $(round(fit.B_sigma, sigdigits=3)) (the reported precisions " *
-                        "may span too narrow a range)", count(keep))
+        if !(fit.B > 0 && fit.B >= _CAL_MIN_SLOPE_SIGNIF * fit.B_sigma)
+            return fallback("CRLB scale not determined: slope B = " *
+                            "$(round(fit.B, sigdigits=3)) ± $(round(fit.B_sigma, sigdigits=3))",
+                            count(keep))
+        end
     end
     if config.clamp_k_to_one && fit.B < 1
         fit, keep, conv = iter(max(fit.A, 0.0), 1.0; fixB = 1.0)
@@ -331,8 +341,8 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         A_um2, B, A_sigma_um2, B_sigma, r_squared, mean_chi2,
         n_pairs, n_tracks_used, n_tracks_filtered,
         bin_centers_um2, bin_observed_um2, copy(n_per_bin), frame_shifts,
-        true, converged ? "" :
-              "Calibration fit did not converge in $(_CAL_MAX_ITER) iterations; the last fit was applied"
+        true, join(filter(!isempty, [note, converged ? "" :
+              "Calibration fit did not converge in $(_CAL_MAX_ITER) iterations; the last fit was applied"]), "; ")
     )
 end
 
