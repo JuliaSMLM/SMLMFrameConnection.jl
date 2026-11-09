@@ -210,6 +210,50 @@ end
         end
     end
 
+    @testset "nearly constant reported precisions do not stop the free fit" begin
+        # Photon counts spread by 2e-8 (σ by 1e-8): the bins' centers differ by about
+        # 1e-8 of their value, and the uncentered normal equations rounded to a nonzero
+        # determinant of a singular matrix: SingularException in 2 of these 20 seeds.
+        cfg = CalibrationConfig(clamp_k_to_one = false)
+        for seed in 1:20
+            smld = calibration_fixture(k = 1.5, σ_motion = 0.0, ntracks = 200, nframes = 2,
+                                       seed = seed, photons = (100.0, 100.0 * (1 + 2e-8)))
+            σ = smld.emitters[1].σ_x
+            r = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+                SMLMFrameConnection.analyze_calibration(smld, cfg)
+            end
+            @test r.calibration_applied
+            applied = (r.sigma_motion_nm / 1000)^2 + r.k_scale^2 * σ^2
+            @test abs(applied / (1.5^2 * σ^2) - 1) < 0.25
+        end
+    end
+
+    @testset "with one bin the CRLB scale is applied, not chosen by rounding" begin
+        # One reported precision (ρ = 0.5): the scale alone and the motion alone both fit
+        # the single bin exactly, and comparing their rounding-level misfits chose the
+        # motion term in 16 of these 55 cases. The diagonal is the same either way; the
+        # applied σ_xy is not.
+        cfg = CalibrationConfig(clamp_k_to_one = false)
+        nmotion = 0
+        for a in 0.03:0.00037:0.05
+            em = Emitter2DFit{Float64}[]
+            for t in 1:100
+                x, y = 5.0 + 2 * mod(t - 1, 10), 5.0 + 2 * div(t - 1, 10)
+                push!(em, Emitter2DFit{Float64}(x, y, 1000.0, 10.0, 0.015, 0.015, 0.0001125,
+                                                30.0, 3.0, 1, 1, t, 0))
+                push!(em, Emitter2DFit{Float64}(x + a + 0.01cos(t), y + 0.035 + 0.01sin(t),
+                                                1000.0, 10.0, 0.015, 0.015, 0.0001125,
+                                                30.0, 3.0, 2, 1, t, 0))
+            end
+            r = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+                SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2), cfg)
+            end
+            @test r.calibration_applied
+            nmotion += r.A_applied > 0
+        end
+        @test nmotion == 0
+    end
+
     @testset "an applied calibration keeps at least 100 pairs" begin
         # Just over 100 pairs: the free fit used 100 or more, then a refit (bound or
         # one-parameter) ran its own cut and applied the calibration from 99 or fewer.
@@ -538,7 +582,8 @@ end
                                         photons = (100.0, 100.0), ntracks = 60, nframes = 3,
                                         seed = seed), cfg)
             end
-            # One bin fits the scale alone and the motion alone equally; take the former.
+            # One bin fits the scale alone and the motion alone equally; the tie goes to the
+            # former.
             (r.calibration_applied && r.A_applied == 0) || continue
             push!(Bs, r.B_applied); push!(rel, r.B_sigma / r.B_applied)
         end

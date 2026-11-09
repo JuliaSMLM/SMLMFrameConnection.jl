@@ -20,6 +20,9 @@ const _CAL_MAX_ITER = 100
 const _CAL_MIN_SLOPE_SIGNIF = 3.0
 # Fewest frame-to-frame pairs a calibration is applied from (after the cut).
 const _CAL_MIN_PAIRS = 100
+# Two one-parameter fits whose misfits (order 1 per degree of freedom under the model)
+# differ by less than this fit equally well.
+const _CAL_MISFIT_TIE = 1e-6
 
 # E[S² | S ≤ c] for S ~ chi²(2): the second moment of the truncated statistic, for the
 # model variance of a truncated bin mean (_pair_obs_var).
@@ -150,18 +153,24 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
     weighted_mean = sum(weights .* bin_observed) / sum(weights)
     ss_tot = sum(weights .* (bin_observed .- weighted_mean) .^ 2)
     if fixA === nothing && fixB === nothing
-        X = hcat(ones(n_valid_bins), bin_centers)
-        W = Diagonal(weights)
-        XtWX = X' * W * X
-        XtWy = X' * W * bin_observed
-        det_XtWX = XtWX[1,1] * XtWX[2,2] - XtWX[1,2]^2
-        abs(det_XtWX) < eps() && return "Singular WLS matrix"
-        coeffs = XtWX \ XtWy
-        Afit, Bfit = coeffs[1], coeffs[2]
+        # Centered at the weighted mean of the bin centers. The normal equations of
+        # (1, x) cancel when the reported precisions barely vary: their determinant is
+        # Σw·Sxx formed as a difference of two nearly equal products, which rounded to
+        # a nonzero value of a singular matrix and made the solve throw.
+        sw = sum(weights)
+        xbar = sum(weights .* bin_centers) / sw
+        ybar = sum(weights .* bin_observed) / sw
+        dxc = bin_centers .- xbar
+        Sxx = sum(weights .* dxc .^ 2)
+        # Bin centers apart by no more than the rounding of their own means carry no
+        # slope (the one-parameter fits still apply).
+        Sxx > sw * (1e-12 * xbar)^2 || return "Reported precisions do not vary across bins"
+        Bfit = sum(weights .* dxc .* (bin_observed .- ybar)) / Sxx
+        Afit = ybar - Bfit * xbar
         ss_res = sum(weights .* (bin_observed .- (Afit .+ Bfit .* bin_centers)) .^ 2)
-        var_coeffs = ss_res / max(1, n_valid_bins - 2) * inv(XtWX)
-        A_sigma = sqrt(max(0.0, var_coeffs[1, 1]))
-        B_sigma = sqrt(max(0.0, var_coeffs[2, 2]))
+        s2 = ss_res / max(1, n_valid_bins - 2)
+        A_sigma = sqrt(max(0.0, s2 * (1 / sw + xbar^2 / Sxx)))
+        B_sigma = sqrt(max(0.0, s2 / Sxx))
     elseif fixA !== nothing
         Afit = fixA
         swcc = sum(weights .* bin_centers .^ 2)
@@ -252,7 +261,8 @@ When the free fit cannot separate the two terms (slope not positive and at least
 standard errors, or R² < 0.1: a narrow range of reported precisions, or a dominant
 motion term), or the reported precisions fill fewer than 3 bins so no free fit exists,
 both one-parameter models are fit, the CRLB scale alone (σ_motion = 0) and the motion
-term alone (k = 1), the better-fitting one is applied, and `warning` says which (also
+term alone (k = 1), the better-fitting one is applied (the CRLB scale on a tie, as with
+a single reported precision, where both fit exactly), and `warning` says which (also
 as a logged warning). When both a motion term and a CRLB scale matter but the data
 cannot separate them (typically 800 pairs or fewer), neither one-parameter model is
 exact: the applied variance stays close near the median σ but can be off by tens of
@@ -444,7 +454,9 @@ function analyze_calibration(smld::BasicSMLD{T,E},
             return fallback("Neither the CRLB scale nor a motion term is determined ($why)",
                             nmax)
         end
-        use_scale = sok && (!mok || sfit.misfit <= mfit.misfit)
+        # Lower misfit wins; a tie goes to the CRLB scale. With one bin both models fit
+        # it exactly (misfit 0 up to rounding), so without a tolerance rounding chose.
+        use_scale = sok && (!mok || sfit.misfit <= mfit.misfit + _CAL_MISFIT_TIE)
         fit, keep, conv = use_scale ? (sfit, skeep, sconv) : (mfit, mkeep, mconv)
         converged = free === nothing ? conv : converged & conv
         note = "Motion and CRLB scale not separable ($why); applied the better " *
