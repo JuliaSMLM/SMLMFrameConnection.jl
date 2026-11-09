@@ -169,6 +169,26 @@ end
         end
     end
 
+    @testset "an intercept negative only by rounding is refit, not refused" begin
+        # The exact line 4x (k = 2, no motion), first localizations at x = 0: A comes out
+        # -1.1e-13 nm² with A_sigma = 0, and the negative-intercept test refused it.
+        g = SMLMFrameConnection._CAL_TRUNC_FACTOR
+        em = Emitter2DFit{Float64}[]
+        t = 0
+        for (rep, n) in ((100.0, 100), (200.0, 100), (300.0, 100)), _ in 1:n
+            t += 1
+            σ = sqrt(rep / 2) * 1e-3
+            push!(em, make_emitter(0.0, Float64(t), 1; σ_pos = σ, track_id = t))
+            push!(em, make_emitter(sqrt(2g * 4rep) * 1e-3, Float64(t), 2; σ_pos = σ,
+                                   track_id = t))
+        end
+        r = SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
+                                                    CalibrationConfig(clamp_k_to_one = false))
+        @test r.A <= 0 && abs(r.A) < 1e-15   # the case under test (μm²)
+        @test r.calibration_applied
+        @test r.k_scale ≈ 2 rtol = 1e-6
+    end
+
     @testset "a bound refit needs 3 bins after its own cut" begin
         # Determined free fit A = -1085 ± 402 nm² (within 3 standard errors, so the bound
         # refit runs), B = 14.8 ± 3.9, 4 bins. The A = 0 refit's cut left 2 bins, and k = 2.0

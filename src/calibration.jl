@@ -356,8 +356,11 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         "R² = $(round(free.r_squared, digits=3)))", used(free))
     # An intercept below zero by more than 3 standard errors contradicts the model
     # (σ_motion² ≥ 0): no fit with the bound held describes those bins, and a refit's own
-    # cut would only leave out the pairs that disagree with it.
-    free.A < -_CAL_MIN_SLOPE_SIGNIF * free.A_sigma && return fallback(
+    # cut would only leave out the pairs that disagree with it. An intercept within
+    # _CAL_EQUAL_REL of the bins' scale is zero to within rounding (an exact line has
+    # A_sigma = 0, and A = ȳ - B·x̄ rounds to either sign).
+    a_round = _CAL_EQUAL_REL * maximum(abs, free.bin_observed)
+    free.A < -(_CAL_MIN_SLOPE_SIGNIF * free.A_sigma + a_round) && return fallback(
         "Motion term significantly negative (free fit: A = " *
         "$(round(free.A, sigdigits=3)) ± $(round(free.A_sigma, sigdigits=3)) nm²); " *
         "the error model does not hold", used(free))
