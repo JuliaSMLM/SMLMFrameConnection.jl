@@ -212,9 +212,19 @@ end
                 CalibrationConfig(clamp_k_to_one = false))
         @test r.calibration_applied
         @test r.k_scale ≈ sqrt(1.5) rtol = 1e-3
-        # Below the span: the first bin; above it: the last.
+        # Values outside the span get bin 0 (left out of the fit).
         @test SMLMFrameConnection._calibration_bins([1.0, 5.0, 10.0, 15.0, 30.0], 2,
-                                                    [5.0, 15.0]) == [1, 1, 2, 2, 2]
+                                                    [5.0, 15.0]) == [0, 1, 2, 2, 0]
+        # A pair the first cut rejects and a later iteration keeps rejoined the last bin,
+        # whose weight assumes one variance for its members: 100 pairs each at four values
+        # from 100 to 300 nm² (75 at 0.8x, 25 at 4x: k² = 1.6) and one at 20000 nm². The
+        # added pair moved k from 1.265 to 1.456.
+        rows = vcat([(r, f * r, n) for r in range(100.0, 300.0; length = 4)
+                     for (f, n) in ((0.8, 75), (4.0, 25))],
+                    [(20000.0, 135434.08002848545, 1)])
+        r = SMLMFrameConnection.analyze_calibration(rows_smld(rows), CalibrationConfig())
+        @test r.calibration_applied
+        @test r.k_scale ≈ sqrt(1.6) rtol = 1e-3
     end
 
     @testset "a bound refit needs 3 bins after its own cut" begin

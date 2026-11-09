@@ -68,7 +68,7 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
     n_per_bin = Int[]
     members = [Int[] for _ in 1:n_bins]
     for i in eachindex(reported)
-        keep[i] && push!(members[bin_of[i]], i)
+        keep[i] && bin_of[i] > 0 && push!(members[bin_of[i]], i)
     end
     for m in members
         if length(m) >= 5
@@ -144,16 +144,20 @@ end
 # pairs the first cut keeps: one rejected pair with an outsized reported value would
 # otherwise stretch the range and crowd every kept pair into one bin). Bin b holds
 # x_min + (b-1)·w ≤ r < x_min + b·w, decided by comparison with those edges (not by
-# rounding (r - x_min)/w, which can put a value on an edge in the bin below); values below
-# the span go to the first bin and the last bin holds everything above its lower edge.
-# Values whose range is at most _CAL_EQUAL_REL of the largest are one value in one bin:
-# split one ulp apart, their bins carry no slope.
+# rounding (r - x_min)/w, which can put a value on an edge in the bin below), and the last
+# bin everything from its lower edge to x_max. Values outside the span get bin 0 and stay
+# out of the fit: a pair the first cut rejected could otherwise rejoin an end bin far from
+# its other members, whose weight assumes they share one variance. Selecting pairs by
+# their reported value does not bias the fit. Values whose range is at most
+# _CAL_EQUAL_REL of the largest are one value in one bin: split one ulp apart, their bins
+# carry no slope.
 function _calibration_bins(reported, n_bins, span = reported)
     x_min, x_max = extrema(span)
-    x_max - x_min > _CAL_EQUAL_REL * x_max || return ones(Int, length(reported))
+    inspan(r) = x_min <= r <= x_max
+    x_max - x_min > _CAL_EQUAL_REL * x_max || return [inspan(r) ? 1 : 0 for r in reported]
     w = (x_max - x_min) / n_bins
     edges = [x_min + b * w for b in 1:n_bins-1]
-    return [searchsortedlast(edges, r) + 1 for r in reported]
+    return [inspan(r) ? searchsortedlast(edges, r) + 1 : 0 for r in reported]
 end
 
 # Iterate cut, truncation-corrected binned fit, and weights from (A, B) to a fixed
@@ -328,7 +332,8 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     A = 0.0
     B = median(z_raw) / (2 * log(2))
 
-    # Bins span the pairs the first cut keeps (at least half: B is set from the median).
+    # Bins span the pairs the first cut keeps (at least half: B is set from the median);
+    # pairs outside that span are left out of the fit.
     n_bins = 20
     bin_of = _calibration_bins(reported_all, n_bins,
                                reported_all[z_raw .<= _CAL_CHI2_CUT * B])
