@@ -343,13 +343,21 @@ function analyze_calibration(smld::BasicSMLD{T,E},
                                                det_nm4, A0, B0; kw...)
     fallback(msg, n) = _fallback_result(mean_chi2, n, n_tracks_used, frame_shifts, msg)
     too_few(n) = "Too few pairs in the fit after the chi² cut ($n < $_CAL_MIN_PAIRS)"
-    # Pairs a fit actually used: kept by the cut and in a bin with enough pairs.
+    # Pairs a fit actually used: kept by the cut and in a bin with enough pairs. When the
+    # fit failed, the same count for the pairs its last cut kept (`kept`).
+    function in_bins(kept)
+        counts = zeros(Int, n_bins)
+        for i in eachindex(kept)
+            kept[i] && bin_of[i] > 0 && (counts[bin_of[i]] += 1)
+        end
+        return sum(c for c in counts if c >= 5; init = 0)
+    end
     used(f) = f isa String ? 0 : f.n_used
 
     fit, keep, converged = iter(A, B)
     # No fit when the reported precisions fill fewer than 3 bins (a narrow or single
     # value).
-    fit isa String && return fallback(fit, count(keep))
+    fit isa String && return fallback(fit, in_bins(keep))
     free = fit   # reported as A, B, errors, R² and the bins
 
     # The free fit separates a motion term from the CRLB scale only when its slope is
@@ -368,12 +376,12 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     if fit.A < 0
         fit, keep, conv = iter(0.0, fit.B; fixA = 0.0)
         converged &= conv
-        fit isa String && return fallback("Refit with σ_motion = 0: $fit", count(keep))
+        fit isa String && return fallback("Refit with σ_motion = 0: $fit", in_bins(keep))
     end
     if config.clamp_k_to_one && fit.B < 1
         fit, keep, conv = iter(max(fit.A, 0.0), 1.0; fixB = 1.0)
         converged &= conv
-        fit isa String && return fallback("Refit with k = 1: $fit", count(keep))
+        fit isa String && return fallback("Refit with k = 1: $fit", in_bins(keep))
         if fit.A < 0   # both bounds bind: the CRLB as reported, no motion term
             fit = merge(fit, (A = 0.0, A_sigma = 0.0))
         end

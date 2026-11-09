@@ -51,7 +51,9 @@ iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when th
 - `B_sigma::Float64`: Standard error of B
 - `r_squared::Float64`: Weighted R² of the WLS fit (about the weighted mean)
 - `mean_chi2::Float64`: Mean chi² (full pair covariance, uncalibrated CRLB) across all frame-to-frame pairs
-- `n_pairs::Int`: Number of frame-to-frame pairs used in the final fit (after the chi² cut)
+- `n_pairs::Int`: Number of frame-to-frame pairs used in the final fit: kept by its chi² cut, inside the
+  bins' span and in bins of 5 or more. On a fallback, the same count for the last fit
+  attempted, or all pairs when there were fewer than 100
 - `n_tracks_used::Int`: Number of tracks contributing pairs
 - `n_tracks_filtered::Int`: Always 0 (the deprecated track filter is ignored)
 - `bin_centers::Vector{Float64}`: Bin centers (CRLB variance) for diagnostic plots

@@ -227,6 +227,17 @@ end
         @test r.k_scale ≈ sqrt(1.6) rtol = 1e-3
     end
 
+    @testset "a fallback reports the pairs in the bins it could use" begin
+        # Two full bins, one of 5 pairs (4 kept by the cut) and two pairs below the span:
+        # the fit fails with 2 bins, and n_pairs counted all 406 kept pairs.
+        rows = ((100.0, 700.0, 200), (150.0, 750.0, 200), (300.0, 900.0, 4),
+                (300.0, 6000.0, 1), (20.0, 1000.0, 2))
+        r = SMLMFrameConnection.analyze_calibration(rows_smld(rows),
+                CalibrationConfig(clamp_k_to_one = false))
+        @test r.warning == "Too few valid bins (2 < 3)"
+        @test r.n_pairs == 400
+    end
+
     @testset "a bound refit needs 3 bins after its own cut" begin
         # Determined free fits with A < 0, refit with A = 0. That refit's own cut left out
         # pairs until fewer than 3 bins remained, and k ≈ 2 was applied from them with no
