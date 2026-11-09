@@ -54,8 +54,9 @@ end
 # values the sample mean and variance rise together), which biased k low on small data.
 # `fixA` or `fixB` holds that parameter at the given value and fits the other alone (the
 # refits of a determined free fit whose bound binds).
-# The two-parameter fit needs 3 bins (one beyond its parameters, for a standard error); a
-# one-parameter fit is defined from 1 bin.
+# Every fit needs 3 bins: the two-parameter fit one beyond its parameters, for a standard
+# error, and a bound refit the same support as the free fit it replaces (its own cut can
+# empty bins; a refit left with fewer has not been checked against the range).
 # Returns a NamedTuple (with `n_used`, the pairs in the bins the fit used), or a String
 # naming why no fit was possible.
 function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
@@ -78,10 +79,8 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
         end
     end
 
-    npar = (fixA === nothing) + (fixB === nothing)
     n_valid_bins = length(bin_centers)
-    min_bins = npar == 2 ? 3 : 1
-    n_valid_bins < min_bins && return "Too few valid bins ($n_valid_bins < $min_bins)"
+    n_valid_bins < 3 && return "Too few valid bins ($n_valid_bins < 3)"
 
     # WLS on binned data: weight = 1/var_of_bin_mean (model variance), normalized
     # A negative intercept can make the prediction small or negative in the lowest bins;
@@ -126,17 +125,12 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
         Bfit = sum(weights .* bin_centers .* (bin_observed .- Afit)) / swcc
         ss_res = sum(weights .* (bin_observed .- (Afit .+ Bfit .* bin_centers)) .^ 2)
         A_sigma = 0.0
-        # One bin: the bin mean is A + B·center, so B's error is the mean's over center.
-        B_sigma = n_valid_bins > 1 ?
-                  sqrt(max(0.0, ss_res / (n_valid_bins - 1) / swcc)) :
-                  sqrt(var_of_bin_mean[1]) / bin_centers[1]
+        B_sigma = sqrt(max(0.0, ss_res / (n_valid_bins - 1) / swcc))
     else
         Bfit = fixB
         Afit = sum(weights .* (bin_observed .- Bfit .* bin_centers)) / sum(weights)
         ss_res = sum(weights .* (bin_observed .- (Afit .+ Bfit .* bin_centers)) .^ 2)
-        A_sigma = n_valid_bins > 1 ?
-                  sqrt(max(0.0, ss_res / (n_valid_bins - 1) / sum(weights))) :
-                  sqrt(var_of_bin_mean[1])
+        A_sigma = sqrt(max(0.0, ss_res / (n_valid_bins - 1) / sum(weights)))
         B_sigma = 0.0
     end
     r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : NaN
@@ -211,8 +205,8 @@ Falls back gracefully (returns `calibration_applied=false`, with the reason in `
 if fewer than 100 frame-to-frame pairs are available, the reported precisions fill fewer
 than 3 bins (reported precisions whose range is at most 1e-12 of the largest are one
 value, one bin), the fit cannot separate the two terms (a narrow range of reported
-precisions, or a dominant motion term), or fewer than 100 pairs remain in the applied fit
-after the cut.
+precisions, or a dominant motion term), a bound refit keeps fewer than 3 bins after its
+own cut, or fewer than 100 pairs remain in the applied fit after the cut.
 """
 function analyze_calibration(smld::BasicSMLD{T,E},
                              config::CalibrationConfig) where {T, E<:SMLMData.AbstractEmitter}
@@ -364,12 +358,12 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     if fit.A < 0
         fit, keep, conv = iter(0.0, fit.B; fixA = 0.0)
         converged &= conv
-        fit isa String && return fallback(fit, count(keep))
+        fit isa String && return fallback("Refit with σ_motion = 0: $fit", count(keep))
     end
     if config.clamp_k_to_one && fit.B < 1
         fit, keep, conv = iter(max(fit.A, 0.0), 1.0; fixB = 1.0)
         converged &= conv
-        fit isa String && return fallback(fit, count(keep))
+        fit isa String && return fallback("Refit with k = 1: $fit", count(keep))
         if fit.A < 0   # both bounds bind: the CRLB as reported, no motion term
             fit = merge(fit, (A = 0.0, A_sigma = 0.0))
         end

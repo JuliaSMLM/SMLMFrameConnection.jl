@@ -132,10 +132,32 @@ end
         for clamp in (true, false)
             r = SMLMFrameConnection.analyze_calibration(smld,
                     CalibrationConfig(clamp_k_to_one = clamp))
-            @test !r.calibration_applied ||
-                  (abs(r.k_scale - 1) < 0.05 && r.sigma_motion_nm < 2.5)
-            @test r.k_scale > 0
+            @test !r.calibration_applied
+            @test startswith(r.warning, "Motion and CRLB scale not separable")
+            @test r.k_scale == 1 && r.sigma_motion_nm == 0
         end
+    end
+
+    @testset "a bound refit needs 3 bins after its own cut" begin
+        # Determined free fit (3 bins, R² = 1) with A = -1200 nm² and B ≈ 16. Its A = 0
+        # refit cut both upper bins and applied k ≈ 2 from the one bin left (120 pairs),
+        # with no warning.
+        g = SMLMFrameConnection._CAL_TRUNC_FACTOR
+        rows = ((100.0, 400.0, 120), (200.0, 1200.0, 4), (200.0, 5200.0, 1),
+                (300.0, 2400.0, 4), (300.0, 8400.0, 1))   # (reported, observed nm², count)
+        em = Emitter2DFit{Float64}[]
+        t = 0
+        for (rep, obs, n) in rows, _ in 1:n
+            t += 1
+            σ = sqrt(rep / 2) * 1e-3
+            x0, y0 = 2.0 + 0.3 * mod(t - 1, 12), 2.0 + 0.3 * div(t - 1, 12)
+            push!(em, make_emitter(x0, y0, 1; σ_pos = σ, track_id = t))
+            push!(em, make_emitter(x0 + sqrt(2g * obs) * 1e-3, y0, 2; σ_pos = σ, track_id = t))
+        end
+        r = SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
+                                                    CalibrationConfig(clamp_k_to_one = false))
+        @test !r.calibration_applied
+        @test startswith(r.warning, "Refit with σ_motion = 0: Too few valid bins")
     end
 
     @testset "applied variance matches the truth when a bound binds" begin
