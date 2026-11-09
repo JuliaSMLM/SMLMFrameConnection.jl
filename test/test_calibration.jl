@@ -170,23 +170,30 @@ end
     end
 
     @testset "an intercept negative only by rounding is refit, not refused" begin
-        # The exact line 4x (k = 2, no motion), first localizations at x = 0: A comes out
-        # -1.1e-13 nm² with A_sigma = 0, and the negative-intercept test refused it.
+        # Exact lines k²·x with no motion, so A is 0 up to rounding and A_sigma is about 0;
+        # the negative-intercept test refused them. (1) 4x at 100-300 nm², first
+        # localizations at x = 0: A = -1.1e-13 nm². (2) 1.21x on a 0.2% range of 20 nm²:
+        # A = -7.5e-11 ± 8.7e-12 nm². (3) 4x at 20-24 nm² with every track at x = 50 µm.
         g = SMLMFrameConnection._CAL_TRUNC_FACTOR
-        em = Emitter2DFit{Float64}[]
-        t = 0
-        for (rep, n) in ((100.0, 100), (200.0, 100), (300.0, 100)), _ in 1:n
-            t += 1
-            σ = sqrt(rep / 2) * 1e-3
-            push!(em, make_emitter(0.0, Float64(t), 1; σ_pos = σ, track_id = t))
-            push!(em, make_emitter(sqrt(2g * 4rep) * 1e-3, Float64(t), 2; σ_pos = σ,
-                                   track_id = t))
+        cases = ((k2 = 4.0, reps = (100.0, 200.0, 300.0), n = 100, dy = 1.0, x1 = 0.0),
+                 (k2 = 1.21, reps = 20.0 .* (1.0, 1.001, 1.002), n = 200, dy = 0.05, x1 = 0.0),
+                 (k2 = 4.0, reps = (20.0, 22.0, 24.0), n = 100, dy = 1.0, x1 = 50.0))
+        for c in cases
+            em = Emitter2DFit{Float64}[]
+            t = 0
+            for rep in c.reps, _ in 1:c.n
+                t += 1
+                σ = sqrt(rep / 2) * 1e-3
+                x = c.x1
+                push!(em, make_emitter(x, c.dy * t, 1; σ_pos = σ, track_id = t))
+                push!(em, make_emitter(x + sqrt(2g * c.k2 * rep) * 1e-3, c.dy * t, 2;
+                                       σ_pos = σ, track_id = t))
+            end
+            r = SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
+                                                        CalibrationConfig(clamp_k_to_one = false))
+            @test r.calibration_applied
+            @test r.k_scale ≈ sqrt(c.k2) rtol = 1e-6
         end
-        r = SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
-                                                    CalibrationConfig(clamp_k_to_one = false))
-        @test r.A <= 0 && abs(r.A) < 1e-15   # the case under test (μm²)
-        @test r.calibration_applied
-        @test r.k_scale ≈ 2 rtol = 1e-6
     end
 
     @testset "a bound refit needs 3 bins after its own cut" begin

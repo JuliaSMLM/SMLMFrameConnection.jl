@@ -23,6 +23,13 @@ const _CAL_MIN_PAIRS = 100
 # Reported precisions whose range is at most this fraction of the largest are one value
 # (one bin): equal to within rounding.
 const _CAL_EQUAL_REL = 1e-12
+# A negative intercept smaller than this fraction of the largest bin mean changes no
+# applied variance by more than that fraction; it is refit with A = 0 like any other.
+# The intercept is extrapolated from the bin means, which amplifies their rounding on a
+# narrow precision range or far from the coordinate origin: on exact lines at positions up
+# to 400 µm, precision ranges down to 0.1% and bin means of 2 to 4000 nm², it stayed
+# below 1e-11 of the largest bin mean.
+const _CAL_A_NEGLIGIBLE = 1e-6
 
 # chi² of a pair difference (dx, dy) under the pair covariance [sxx sxy; sxy syy] with
 # determinant `det` (given, computed without cancellation); it is chi²(2) when that
@@ -356,11 +363,11 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         "R² = $(round(free.r_squared, digits=3)))", used(free))
     # An intercept below zero by more than 3 standard errors contradicts the model
     # (σ_motion² ≥ 0): no fit with the bound held describes those bins, and a refit's own
-    # cut would only leave out the pairs that disagree with it. An intercept within
-    # _CAL_EQUAL_REL of the bins' scale is zero to within rounding (an exact line has
-    # A_sigma = 0, and A = ȳ - B·x̄ rounds to either sign).
-    a_round = _CAL_EQUAL_REL * maximum(abs, free.bin_observed)
-    free.A < -(_CAL_MIN_SLOPE_SIGNIF * free.A_sigma + a_round) && return fallback(
+    # cut would only leave out the pairs that disagree with it. Only an intercept that
+    # matters is tested (_CAL_A_NEGLIGIBLE): on an exact line A_sigma is 0, and A rounds to
+    # either sign.
+    a_negligible = _CAL_A_NEGLIGIBLE * maximum(abs, free.bin_observed)
+    free.A < -max(_CAL_MIN_SLOPE_SIGNIF * free.A_sigma, a_negligible) && return fallback(
         "Motion term significantly negative (free fit: A = " *
         "$(round(free.A, sigdigits=3)) ± $(round(free.A_sigma, sigdigits=3)) nm²); " *
         "the error model does not hold", used(free))
