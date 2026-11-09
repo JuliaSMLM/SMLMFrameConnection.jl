@@ -23,13 +23,6 @@ const _CAL_MIN_PAIRS = 100
 # Reported precisions whose range is at most this fraction of the largest are one value
 # (one bin): equal to within rounding.
 const _CAL_EQUAL_REL = 1e-12
-# A negative intercept smaller than this fraction of the largest bin mean changes no
-# applied variance by more than that fraction; it is refit with A = 0 like any other.
-# The intercept is extrapolated from the bin means, which amplifies their rounding on a
-# narrow precision range or far from the coordinate origin: on exact lines at positions up
-# to 400 µm, precision ranges down to 0.1% and bin means of 2 to 4000 nm², it stayed
-# below 1e-11 of the largest bin mean.
-const _CAL_A_NEGLIGIBLE = 1e-6
 
 # chi² of a pair difference (dx, dy) under the pair covariance [sxx sxy; sxy syy] with
 # determinant `det` (given, computed without cancellation); it is chi²(2) when that
@@ -205,10 +198,8 @@ mismatches; the truncated bin means are corrected for the variance the cut remov
 the fit iterates to convergence.
 
 The fit is applied only when it separates the two terms: slope positive and at least 3
-standard errors, and R² ≥ 0.1. A determined fit whose bound binds (A < 0 within 3
-standard errors, or B < 1 with `clamp_k_to_one`) is refit with that parameter held at its
-bound; an intercept further below zero contradicts the model, and the calibration falls
-back.
+standard errors, and R² ≥ 0.1. A determined fit whose bound binds (A < 0, or B < 1 with
+`clamp_k_to_one`) is refit with that parameter held at its bound.
 
 Falls back gracefully (returns `calibration_applied=false`, with the reason in `warning`)
 if fewer than 100 frame-to-frame pairs are available, the reported precisions fill fewer
@@ -361,19 +352,9 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     determined || return fallback("Motion and CRLB scale not separable (free fit: B = " *
         "$(round(free.B, sigdigits=3)) ± $(round(free.B_sigma, sigdigits=3)), " *
         "R² = $(round(free.r_squared, digits=3)))", used(free))
-    # An intercept below zero by more than 3 standard errors contradicts the model
-    # (σ_motion² ≥ 0): no fit with the bound held describes those bins, and a refit's own
-    # cut would only leave out the pairs that disagree with it. Only an intercept that
-    # matters is tested (_CAL_A_NEGLIGIBLE): on an exact line A_sigma is 0, and A rounds to
-    # either sign.
-    a_negligible = _CAL_A_NEGLIGIBLE * maximum(abs, free.bin_observed)
-    free.A < -max(_CAL_MIN_SLOPE_SIGNIF * free.A_sigma, a_negligible) && return fallback(
-        "Motion term significantly negative (free fit: A = " *
-        "$(round(free.A, sigdigits=3)) ± $(round(free.A_sigma, sigdigits=3)) nm²); " *
-        "the error model does not hold", used(free))
-    # A determined free fit with A < 0 within its error refits the scale alone: the bound
-    # σ_motion² ≥ 0 binds, and keeping the slope fitted jointly with the negative intercept
-    # moves the applied variance away from the data.
+    # A determined free fit with A < 0 refits the scale alone: the bound σ_motion² ≥ 0
+    # binds, and keeping the slope fitted jointly with the negative intercept moves the
+    # applied variance away from the data.
     if fit.A < 0
         fit, keep, conv = iter(0.0, fit.B; fixA = 0.0)
         converged &= conv

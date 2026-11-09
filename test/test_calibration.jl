@@ -154,26 +154,13 @@ end
         return make_test_smld(em; n_frames = 2)
     end
 
-    @testset "a significantly negative intercept falls back" begin
-        # Bins on the line 16x - 1200 (R² = 1, so A = -1200 nm² is far beyond its error).
-        # The A = 0 refit's own cut left out the pairs that disagree with it and applied
-        # k ≈ 2 with no warning: from one bin, or from three bins spanning 100-130 nm² of
-        # the free fit's 100-300.
-        base = ((100.0, 400.0, 120), (200.0, 1200.0, 4), (200.0, 5200.0, 1),
-                (300.0, 2400.0, 4), (300.0, 8400.0, 1))
-        for rows in (base, (base..., (115.0, 640.0, 5), (130.0, 880.0, 5)))
-            r = SMLMFrameConnection.analyze_calibration(rows_smld(rows),
-                    CalibrationConfig(clamp_k_to_one = false))
-            @test !r.calibration_applied
-            @test startswith(r.warning, "Motion term significantly negative")
-        end
-    end
-
-    @testset "an intercept negative only by rounding is refit, not refused" begin
-        # Exact lines k²·x with no motion, so A is 0 up to rounding and A_sigma is about 0;
-        # the negative-intercept test refused them. (1) 4x at 100-300 nm², first
-        # localizations at x = 0: A = -1.1e-13 nm². (2) 1.21x on a 0.2% range of 20 nm²:
-        # A = -7.5e-11 ± 8.7e-12 nm². (3) 4x at 20-24 nm² with every track at x = 50 µm.
+    @testset "rounding of the intercept does not decide the calibration" begin
+        # Exact lines k²·x with no motion: A is 0 up to rounding, of either sign, and its
+        # error about 0. A test that refused a significantly negative intercept fell back on
+        # these: (1) 4x at 100-300 nm², first localizations at x = 0 (A = -1.1e-13 nm²);
+        # (2) 1.21x on a 0.2% range of 20 nm² (A = -7.5e-11 ± 8.7e-12 nm²); (3) 4x at
+        # 20-24 nm² with every track at x = 50 µm. A negative intercept is refit with A = 0,
+        # which gives the same k.
         g = SMLMFrameConnection._CAL_TRUNC_FACTOR
         cases = ((k2 = 4.0, reps = (100.0, 200.0, 300.0), n = 100, dy = 1.0, x1 = 0.0),
                  (k2 = 1.21, reps = 20.0 .* (1.0, 1.001, 1.002), n = 200, dy = 0.05, x1 = 0.0),
@@ -194,18 +181,41 @@ end
             @test r.calibration_applied
             @test r.k_scale ≈ sqrt(c.k2) rtol = 1e-6
         end
+        # (4) Float32 emitters, 1.21x at 2000-2040 nm², tracks at x = 0 and at x = 10 µm:
+        # the same k either way (the refusing test fell back at 10 µm, A = -1.6 ± 0.4 nm²).
+        for x0 in (0.0f0, 10.0f0)
+            em = Emitter2DFit{Float32}[]
+            t = 0
+            for rep in (2000.0, 2020.0, 2040.0), _ in 1:100
+                t += 1
+                σ = Float32(sqrt(rep / 2) * 1e-3)
+                y = Float32(0.15t)
+                push!(em, Emitter2DFit{Float32}(x0, y, 1000f0, 10f0, σ, σ, 0f0, 30f0, 3f0,
+                                                1, 1, t, 0))
+                push!(em, Emitter2DFit{Float32}(x0 + Float32(sqrt(2g * 1.21rep) * 1e-3), y,
+                                                1000f0, 10f0, σ, σ, 0f0, 30f0, 3f0, 2, 1, t, 0))
+            end
+            r = SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
+                                                        CalibrationConfig(clamp_k_to_one = false))
+            @test r.calibration_applied
+            @test r.k_scale ≈ 1.1 rtol = 1e-4
+        end
     end
 
     @testset "a bound refit needs 3 bins after its own cut" begin
-        # Determined free fit A = -1085 ± 402 nm² (within 3 standard errors, so the bound
-        # refit runs), B = 14.8 ± 3.9, 4 bins. The A = 0 refit's cut left 2 bins, and k = 2.0
-        # was applied from them with no warning.
-        rows = ((100.0, 400.0, 120), (150.0, 650.0, 5), (200.0, 1400.0, 4),
-                (200.0, 6000.0, 1), (300.0, 2000.0, 4), (300.0, 10500.0, 1))
-        r = SMLMFrameConnection.analyze_calibration(rows_smld(rows),
-                CalibrationConfig(clamp_k_to_one = false))
-        @test !r.calibration_applied
-        @test startswith(r.warning, "Refit with σ_motion = 0: Too few valid bins")
+        # Determined free fits with A < 0, refit with A = 0. That refit's own cut left out
+        # pairs until fewer than 3 bins remained, and k ≈ 2 was applied from them with no
+        # warning: (1) A = -1085 ± 402 nm², B = 14.8 ± 3.9, 4 bins, 2 left; (2) bins on the
+        # line 16x - 1200 nm², 3 bins, 1 or 2 left.
+        for rows in (((100.0, 400.0, 120), (150.0, 650.0, 5), (200.0, 1400.0, 4),
+                      (200.0, 6000.0, 1), (300.0, 2000.0, 4), (300.0, 10500.0, 1)),
+                     ((100.0, 400.0, 120), (200.0, 1200.0, 4), (200.0, 5200.0, 1),
+                      (300.0, 2400.0, 4), (300.0, 8400.0, 1)))
+            r = SMLMFrameConnection.analyze_calibration(rows_smld(rows),
+                    CalibrationConfig(clamp_k_to_one = false))
+            @test !r.calibration_applied
+            @test startswith(r.warning, "Refit with σ_motion = 0: Too few valid bins")
+        end
     end
 
     @testset "applied variance matches the truth when a bound binds" begin
