@@ -247,7 +247,8 @@ end
 # When every covariance in the group is the same, the result is exact in closed form,
 # the arithmetic mean and Σ/n, however close to singular Σ is. The mean is taken as
 # x₁ + Σ (xᵢ - x₁)/n: exactly x₁ when all coordinates are equal (a mean that rounds
-# away from them reads as a real separation downstream, in the density estimate), and
+# away from them reads as a real separation downstream, in the density estimate; x₁
+# itself, so a group of one, or of equal coordinates, keeps even the sign of a zero), and
 # each difference is scaled before the sum, so it overflows only when two coordinates
 # differ by more than the largest Float64.
 # Returns (μx, μy, Σ11, Σ22, Σ12).
@@ -256,8 +257,9 @@ function _precision_mean(x, y, σx, σy, σxy, idx)
     if all(i -> σx[i] == σx[i1] && σy[i] == σy[i1] && σxy[i] == σxy[i1], idx)
         n = length(idx)
         x1, y1 = Float64(x[i1]), Float64(y[i1])
-        return x1 + sum((Float64(x[i]) - x1) / n for i in idx),
-               y1 + sum((Float64(y[i]) - y1) / n for i in idx),
+        sx = sum((Float64(x[i]) - x1) / n for i in idx)
+        sy = sum((Float64(y[i]) - y1) / n for i in idx)
+        return sx == 0 ? x1 : x1 + sx, sy == 0 ? y1 : y1 + sy,
                Float64(σx[i1])^2 / n, Float64(σy[i1])^2 / n, Float64(σxy[i1]) / n
     end
     ix, iy, wx, wy = i1, i1, -Inf, -Inf

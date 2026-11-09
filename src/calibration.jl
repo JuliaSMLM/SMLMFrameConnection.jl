@@ -199,20 +199,25 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
 
     return (A = Afit, B = Bfit, A_sigma = A_sigma, B_sigma = B_sigma,
             r_squared = r_squared, bin_centers = bin_centers,
-            bin_observed = bin_observed, n_per_bin = n_per_bin, n_used = sum(n_per_bin),
-            members = valid_members)
+            bin_observed = bin_observed, n_per_bin = n_per_bin, n_used = sum(n_per_bin))
 end
 
-# Chi-square of a fit over its bins, Σ_b (ȳ_b - (A + B·x_b))² / Var(ȳ_b), with each bin
-# mean's variance from its pairs' covariances under that fit (_model_var_of_mean: the
-# cut's truncation, the covariance shape and pairs that share a localization). Under the
-# model it is about chi² with (bins - parameters) degrees of freedom.
-function _fit_chi2(fit, vx, vy, cxy, adj, shared)
-    A, B = max(fit.A, 0.0), fit.B
+# Chi-square of the model (A, B) over the pairs in `keep`, binned as in _binned_wls (bins
+# of 5 or more): Σ_b (ȳ_b - (A + B·x̄_b))² / Var(ȳ_b), with each bin mean's variance from
+# its pairs' covariances under the model (_model_var_of_mean: the cut's truncation, the
+# covariance shape and pairs that share a localization). Two models compared on the same
+# `keep` are scored on the same observations; under a model it is about chi² with
+# (bins - parameters) degrees of freedom.
+function _fit_chi2(A, B, keep, reported, observed, bin_of, n_bins, vx, vy, cxy, adj, shared)
+    members = [Int[] for _ in 1:n_bins]
+    for i in eachindex(reported)
+        keep[i] && push!(members[bin_of[i]], i)
+    end
     q = 0.0
-    for (b, m) in enumerate(fit.members)
-        v = _model_var_of_mean(m, vx, vy, cxy, A, B, adj, shared)
-        q += (fit.bin_observed[b] - (fit.A + fit.B * fit.bin_centers[b]))^2 / v
+    for m in members
+        length(m) >= 5 || continue
+        v = _model_var_of_mean(m, vx, vy, cxy, max(A, 0.0), B, adj, shared)
+        q += (mean(@view observed[m]) - (A + B * mean(@view reported[m])))^2 / v
     end
     return q
 end
@@ -290,11 +295,12 @@ standard errors, or R² < 0.1: a narrow range of reported precisions, or a domin
 motion term), or the reported precisions fill fewer than 3 bins so no free fit exists,
 both one-parameter models are fit, the CRLB scale alone (σ_motion = 0) and the motion
 term alone (k = 1). The CRLB scale alone, which keeps the reported covariance's shape,
-is applied unless the motion term fits the bins significantly better: its chi-square
-`Q = Σ_b (ȳ_b - ŷ_b)² / Var(ȳ_b)` (bin means ȳ_b, fitted values ŷ_b, and each bin
-mean's variance under that fit from its pairs' covariances, the cut and shared
-localizations) must be lower than the scale fit's by more than 3.84, the 95% point of
-chi²(1). With a single bin both fit exactly and the scale is applied. Reported
+is applied unless the motion term fits the bins significantly better. Both are scored on
+the same observations, the pairs both fits' cuts keep, by the chi-square
+`Q = Σ_b (ȳ_b - ŷ_b)² / Var(ȳ_b)` (bin means ȳ_b, the model's values ŷ_b, and each bin
+mean's variance under the model from its pairs' covariances, the cut and shared
+localizations); the motion term's must be lower than the scale's by more than 3.84, the
+95% point of chi²(1). With a single bin both fit exactly and the scale is applied. Reported
 precisions whose range is at most 1e-12 of the largest are one value (one bin).
 `warning` says which model was applied (also as a logged warning). When both a motion
 term and a CRLB scale matter but the data
@@ -481,12 +487,18 @@ function analyze_calibration(smld::BasicSMLD{T,E},
             return fallback("Neither the CRLB scale nor a motion term is determined ($why)",
                             nmax)
         end
-        # The motion term replaces the scale only when its chi-square over the bins is
-        # lower by more than the χ²(1) 95% point. With one bin both fit it exactly (both
-        # chi-squares 0), and the scale is applied.
-        qdiff = sok && mok ?
-            _fit_chi2(sfit, vx_nm2, vy_nm2, cxy_nm2, adj_vec, shared_nm2) -
-            _fit_chi2(mfit, vx_nm2, vy_nm2, cxy_nm2, adj_vec, shared_nm2) : 0.0
+        # The motion term replaces the scale only when its chi-square is lower by more
+        # than the χ²(1) 95% point. Both are scored on the same observations, the pairs
+        # both cuts keep: scored on its own cut, a fit could win by leaving out a bin it
+        # fits badly. With one bin and the same pairs both fit it exactly.
+        qdiff = if sok && mok
+            both = skeep .& mkeep
+            q = f -> _fit_chi2(f.A, f.B, both, reported_all, observed_all, bin_of, n_bins,
+                               vx_nm2, vy_nm2, cxy_nm2, adj_vec, shared_nm2)
+            q(sfit) - q(mfit)
+        else
+            0.0
+        end
         use_scale = sok && (!mok || qdiff <= _CAL_MOTION_CHI2)
         fit, keep, conv = use_scale ? (sfit, skeep, sconv) : (mfit, mkeep, mconv)
         converged = free === nothing ? conv : converged & conv

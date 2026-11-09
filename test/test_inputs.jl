@@ -116,6 +116,14 @@ using Random
         o32 = combinelocalizations(BasicSMLD([e32], make_test_camera(), 1, 1,
                                              Dict{String,Any}())).emitters[1]
         @test (o32.x, o32.y, o32.σ_x, o32.σ_y, o32.σ_xy) == (e32.x, e32.y, e32.σ_x, e32.σ_y, e32.σ_xy)
+        # A zero keeps its sign: x₁ + 0.0 turned -0.0 into +0.0.
+        for T in (Float32, Float64)
+            ez = Emitter2DFit{T}(-zero(T), -zero(T), 1000, 10, T(0.013), T(0.011), T(2e-5),
+                                 30, 3, 1, 1, 0, 0)
+            oz = combinelocalizations(BasicSMLD([ez], make_test_camera(), 1, 1,
+                                                Dict{String,Any}())).emitters[1]
+            @test oz.x === -zero(T) && oz.y === -zero(T)
+        end
     end
 
     @testset "nearly singular covariances stay finite and positive definite" begin

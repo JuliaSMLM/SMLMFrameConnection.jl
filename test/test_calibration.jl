@@ -298,6 +298,22 @@ end
         end
     end
 
+    @testset "both one-parameter fits are scored on the same pairs" begin
+        # True CRLB scale k = 2, no motion, ρ = 0.9. The scale fit kept 153 pairs in 18
+        # bins (chi-square 26.4) and the motion fit 145 in 17 (13.3): scored each on its
+        # own cut, the motion fit won by leaving out pairs and a bin it fits badly, and a
+        # 9.9 nm motion term was applied. On the pairs both keep: 8.5 against 13.3.
+        r = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            SMLMFrameConnection.analyze_calibration(
+                calibration_fixture(k = 2.0, σ_motion = 0.0, ρ = 0.9, ntracks = 160,
+                                    nframes = 2, seed = 153, photons = (100.0, 102.0)),
+                CalibrationConfig(clamp_k_to_one = false))
+        end
+        @test r.calibration_applied
+        @test r.A_applied == 0
+        @test abs(r.k_scale - 2) < 0.2
+    end
+
     @testset "each one-parameter candidate needs 100 pairs of its own" begin
         # One reported precision, ρ = 0.9: 97 pairs displaced along the covariance's major
         # axis and 3 along its minor axis. The scale fit's cut (B·Σ, narrow across the
