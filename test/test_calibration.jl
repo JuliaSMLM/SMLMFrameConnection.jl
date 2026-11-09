@@ -205,6 +205,9 @@ end
                     CalibrationConfig(clamp_k_to_one = false))
             @test r.calibration_applied
             @test occursin("no free fit", r.warning)
+            # Without a free fit, only the applied fit's convergence counts (the failed
+            # free fit is not a non-convergence).
+            @test !occursin("converge", r.warning)
             applied = (r.sigma_motion_nm / 1000)^2 + r.k_scale^2 * σ^2
             @test abs(applied / (σm^2 + k^2 * σ^2) - 1) < 0.03
         end
@@ -252,6 +255,101 @@ end
             nmotion += r.A_applied > 0
         end
         @test nmotion == 0
+    end
+
+    @testset "precisions equal to within rounding are one bin; the scale stays" begin
+        # SMLMSim fixture, true CRLB scale k = 1.5 and no motion, ρ = 0.5, photon counts
+        # spread by 2e-15: the reported precisions differ by a few ulps and filled several
+        # one-ulp bins, the two one-parameter fits' cuts kept different pairs, and the
+        # motion term was applied in 13 of these 40 seeds (σ_xy then unscaled by k²).
+        cfg = CalibrationConfig(clamp_k_to_one = false)
+        nmotion = 0
+        for seed in 1:40
+            r = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+                SMLMFrameConnection.analyze_calibration(
+                    calibration_fixture(k = 1.5, σ_motion = 0.0, ρ = 0.5, ntracks = 300,
+                                        nframes = 2, seed = seed,
+                                        photons = (100.0, 100.0 * (1 + 2e-15))), cfg)
+            end
+            @test r.calibration_applied
+            nmotion += r.A_applied > 0
+        end
+        @test nmotion == 0
+    end
+
+    @testset "on a narrow range the motion term needs a significant improvement" begin
+        # The same fixture with photon counts spread by 2e-6 and 2e-2: the data cannot
+        # separate a motion term from the CRLB scale, and the lower misfit picked the
+        # motion term in 16 and 22 of 40 seeds with none present. Now the motion term
+        # must lower the bins' chi-square by more than the χ²(1) 95% point.
+        cfg = CalibrationConfig(clamp_k_to_one = false)
+        for s in (1e-6, 1e-2)
+            nmotion = 0
+            for seed in 1:40
+                r = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+                    SMLMFrameConnection.analyze_calibration(
+                        calibration_fixture(k = 1.5, σ_motion = 0.0, ρ = 0.5, ntracks = 300,
+                                            nframes = 2, seed = seed,
+                                            photons = (100.0, 100.0 * (1 + 2s))), cfg)
+                end
+                nmotion += r.calibration_applied && r.A_applied > 0
+            end
+            @test nmotion <= 4   # about 5% of 40 expected by chance
+        end
+    end
+
+    @testset "each one-parameter candidate needs 100 pairs of its own" begin
+        # One reported precision, ρ = 0.9: 97 pairs displaced along the covariance's major
+        # axis and 3 along its minor axis. The scale fit's cut (B·Σ, narrow across the
+        # minor axis) leaves those 3 out and uses 97 pairs; the motion fit's (A·I + Σ)
+        # keeps them and uses 100. Only the motion fit may be applied.
+        σ, ρ = 0.015, 0.9
+        em = Emitter2DFit{Float64}[]
+        for t in 1:100
+            x0, y0 = 5.0 + 2 * mod(t - 1, 10), 5.0 + 2 * div(t - 1, 10)
+            d = t <= 97 ? sqrt(17 / 2) * σ .* (1, 1) : sqrt(12 / 2) * σ .* (1, -1)
+            push!(em, Emitter2DFit{Float64}(x0, y0, 1000.0, 10.0, σ, σ, ρ * σ^2, 30.0, 3.0,
+                                            1, 1, t, 0))
+            push!(em, Emitter2DFit{Float64}(x0 + d[1], y0 + d[2], 1000.0, 10.0, σ, σ,
+                                            ρ * σ^2, 30.0, 3.0, 2, 1, t, 0))
+        end
+        r = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
+                                                    CalibrationConfig(clamp_k_to_one = false))
+        end
+        @test r.calibration_applied
+        @test r.n_pairs == 100
+        @test r.B_applied == 1 && r.A_applied > 0
+    end
+
+    @testset "mean_chi2 uses the full pair covariance" begin
+        # Displacements along the minor axis of a ρ = 0.99 covariance, sized so every
+        # pair's chi² under its full covariance is 2; the diagonal form
+        # dx²/σx² + dy²/σy² gives 2(1 - ρ) = 0.02.
+        σ, ρ = 0.015, 0.99
+        a = σ * sqrt(2 * (1 - ρ))
+        em = Emitter2DFit{Float64}[]
+        for t in 1:100
+            x0, y0 = 5.0 + 2 * mod(t - 1, 10), 5.0 + 2 * div(t - 1, 10)
+            push!(em, Emitter2DFit{Float64}(x0, y0, 1000.0, 10.0, σ, σ, ρ * σ^2, 30.0, 3.0,
+                                            1, 1, t, 0))
+            push!(em, Emitter2DFit{Float64}(x0 + a, y0 - a, 1000.0, 10.0, σ, σ, ρ * σ^2,
+                                            30.0, 3.0, 2, 1, t, 0))
+        end
+        r = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
+                                                    CalibrationConfig())
+        end
+        @test r.mean_chi2 ≈ 2 rtol = 1e-6
+    end
+
+    @testset "a reported value on a bin edge goes to the bin above" begin
+        # Bin b holds x_min + (b-1)·w ≤ r < x_min + b·w. Here r = x_min + w as computed
+        # belongs to bin 2, but (r - x_min)/w rounds below 1, so floor put it in bin 1.
+        xmin, xmax = 351.5213705972572, 801.6907871093076
+        r = xmin + (xmax - xmin) / 20
+        @test floor(Int, (r - xmin) / ((xmax - xmin) / 20)) == 0   # the case under test
+        @test SMLMFrameConnection._calibration_bins([xmin, r, xmax], 20) == [1, 2, 20]
     end
 
     @testset "an applied calibration keeps at least 100 pairs" begin

@@ -94,22 +94,8 @@ function combinelocalizations(smld::BasicSMLD{T,E};
     for (out_idx, nn) in enumerate(keep)
         indices = (1:nperID[nn]) .+ ncumulative[nn]
 
-        # A group of one (an unlinked localization, or a one-localization track) is its
-        # own combination: copied, not round-tripped through the precision matrix.
-        if nperID[nn] == 1
-            i = indices[1]
-            x_combined[out_idx], y_combined[out_idx] = x[i], y[i]
-            σ_x_combined[out_idx], σ_y_combined[out_idx] = σ_x[i], σ_y[i]
-            σ_xy_combined[out_idx] = σ_xy[i]
-            photons_combined[out_idx], σ_photons_combined[out_idx] = photons[i], σ_photons[i]
-            bg_combined[out_idx], σ_bg_combined[out_idx] = bg[i], σ_bg[i]
-            connectID_combined[out_idx] = connectID[i]
-            framenum_combined[out_idx] = framenum[i]
-            datasetnum_combined[out_idx] = datasetnum[i]
-            id_combined[out_idx] = id[i]
-            continue
-        end
-
+        # A group of one (an unlinked localization, or a one-localization track) comes out
+        # unchanged: _precision_mean's identical-covariance form returns it exactly.
         # Combine positions using precision-weighted mean with full 2x2 covariance.
         # For each measurement i: Σᵢ = [σ_x² σ_xy; σ_xy σ_y²], Pᵢ = Σᵢ⁻¹
         # Combined: Σ_comb = (Σ Pᵢ)⁻¹, pos_comb = Σ_comb * Σ(Pᵢ * posᵢ)

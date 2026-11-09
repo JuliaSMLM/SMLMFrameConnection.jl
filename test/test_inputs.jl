@@ -230,19 +230,27 @@ using Random
 
     # A cluster of two localizations two frames apart (frames 2 and 4, so their birth
     # costs are finite: the on-state density is 0 at frame 1), for create_costmatrix.
-    function costcase(; initial_density, p_miss, frames = (2, 4))
+    function costcase(; initial_density, p_miss, frames = (2, 4), σ = 0.005)
         params = SMLMFrameConnection.ParamStruct()
         params.initial_density = [initial_density]
         params.k_on, params.k_off, params.k_bleach, params.p_miss = 0.01, 0.3, 0.01, p_miss
         # columns: x y σ_x σ_y σ_xy frame dataset connectID index
-        cluster = [5.0 5.0 0.005 0.005 0.0 frames[1] 1 1 1;
-                   5.001 5.0 0.005 0.005 0.0 frames[2] 1 1 2]
+        cluster = [5.0 5.0 σ σ 0.0 frames[1] 1 1 1;
+                   5.001 5.0 σ σ 0.0 frames[2] 1 1 2]
         k = params.k_on + params.k_off + params.k_bleach
         duty = params.k_on / k
         l1 = params.k_bleach * duty
         l2 = k - l1
         base = [duty * (exp(-l1 * (f - 1)) - exp(-l2 * (f - 1))) for f in 1:5]
         return SMLMFrameConnection.create_costmatrix([cluster], params, 1, 5, base)
+    end
+
+    @testset "the birth cost follows the localization area at any size" begin
+        # The birth cost carries -log(loc_area), loc_area = π√det(Σ) = πσ² here, so σ of
+        # 1e-9 µm against 1e-3 µm adds 2·log(1e6). A floor of eps() on det held every σ
+        # below about 1e-8 µm at the floor's area.
+        birth(σ) = costcase(initial_density = 1.0, p_miss = 0.1, σ = σ)[3, 1]
+        @test birth(1e-9) - birth(1e-3) ≈ 2 * log(1e6) rtol = 1e-5
     end
 
     @testset "non-finite costs never reach the LAP solver" begin

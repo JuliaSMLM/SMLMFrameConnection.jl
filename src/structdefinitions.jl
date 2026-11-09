@@ -45,10 +45,12 @@ iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when th
 - `sigma_motion_nm::Float64`: Applied per-localization motion std dev in nm (√(A_applied/2) × 1000)
 - `k_scale::Float64`: Applied CRLB scale factor (√B_applied)
 - `A::Float64`: Intercept of the free two-parameter fit (pair-difference variance 2σ_motion², in μm²); can be negative
-- `B::Float64`: Slope of the free two-parameter fit (k²); below 1 when the clamp binds. The
-  line `A + B * bin_centers` goes through `bin_observed`. When the reported precisions
-  fill fewer than 3 bins there is no free fit, and `A`, `B`, their errors, R² and the bins
-  are those of the applied one-parameter fit (`warning` says so)
+- `B::Float64`: Slope of the free two-parameter fit (k²). The line `A + B * bin_centers`
+  goes through `bin_observed`. With a free fit, `B < 1` while `B_applied == 1` means the
+  clamp bound. When the reported precisions fill fewer than 3 bins there is no free fit,
+  and `A`, `B`, their errors, R² and the bins are those of the applied fit, after any
+  clamp (`B == B_applied`, so `B < 1` does not show a clamp then; `warning` says there was
+  no free fit)
 - `A_sigma::Float64`: Standard error of A
 - `B_sigma::Float64`: Standard error of B
 - `r_squared::Float64`: Weighted R² of the WLS fit (about the weighted mean); NaN for one bin

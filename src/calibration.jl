@@ -20,9 +20,14 @@ const _CAL_MAX_ITER = 100
 const _CAL_MIN_SLOPE_SIGNIF = 3.0
 # Fewest frame-to-frame pairs a calibration is applied from (after the cut).
 const _CAL_MIN_PAIRS = 100
-# Two one-parameter fits whose misfits (order 1 per degree of freedom under the model)
-# differ by less than this fit equally well.
-const _CAL_MISFIT_TIE = 1e-6
+# When the two terms are not separable, the CRLB scale alone is applied unless the motion
+# term alone lowers the bins' chi-square (_fit_chi2) by more than this: the 95% point of
+# chi²(1). Both models have one parameter, so this asks the motion term's AIC to be lower
+# by the same amount.
+const _CAL_MOTION_CHI2 = 3.841458820694124
+# Reported precisions whose range is at most this fraction of the largest are one value
+# (one bin): equal to within rounding.
+const _CAL_EQUAL_REL = 1e-12
 
 # E[S² | S ≤ c] for S ~ chi²(2): the second moment of the truncated statistic, for the
 # model variance of a truncated bin mean (_pair_obs_var).
@@ -162,9 +167,9 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
         ybar = sum(weights .* bin_observed) / sw
         dxc = bin_centers .- xbar
         Sxx = sum(weights .* dxc .^ 2)
-        # Bin centers apart by no more than the rounding of their own means carry no
-        # slope (the one-parameter fits still apply).
-        Sxx > sw * (1e-12 * xbar)^2 || return "Reported precisions do not vary across bins"
+        # Precisions equal to within rounding share one bin (_calibration_bins), so
+        # distinct bins differ; this guards only the impossible exact zero.
+        Sxx > 0 || return "Reported precisions do not vary across bins"
         Bfit = sum(weights .* dxc .* (bin_observed .- ybar)) / Sxx
         Afit = ybar - Bfit * xbar
         ss_res = sum(weights .* (bin_observed .- (Afit .+ Bfit .* bin_centers)) .^ 2)
@@ -191,15 +196,38 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
         B_sigma = 0.0
     end
     r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : NaN
-    # Misfit comparable between models: sum over bins of n·(observed/predicted - 1)²
-    # (each bin's mean has relative variance about 1/n under the model), per degree of
-    # freedom left after the fitted parameters.
-    pred = max.(Afit .+ Bfit .* bin_centers, eps())
-    misfit = sum(n_per_bin .* (bin_observed ./ pred .- 1) .^ 2) / max(1, n_valid_bins - npar)
 
     return (A = Afit, B = Bfit, A_sigma = A_sigma, B_sigma = B_sigma,
-            r_squared = r_squared, misfit = misfit, bin_centers = bin_centers,
-            bin_observed = bin_observed, n_per_bin = n_per_bin, n_used = sum(n_per_bin))
+            r_squared = r_squared, bin_centers = bin_centers,
+            bin_observed = bin_observed, n_per_bin = n_per_bin, n_used = sum(n_per_bin),
+            members = valid_members)
+end
+
+# Chi-square of a fit over its bins, Σ_b (ȳ_b - (A + B·x_b))² / Var(ȳ_b), with each bin
+# mean's variance from its pairs' covariances under that fit (_model_var_of_mean: the
+# cut's truncation, the covariance shape and pairs that share a localization). Under the
+# model it is about chi² with (bins - parameters) degrees of freedom.
+function _fit_chi2(fit, vx, vy, cxy, adj, shared)
+    A, B = max(fit.A, 0.0), fit.B
+    q = 0.0
+    for (b, m) in enumerate(fit.members)
+        v = _model_var_of_mean(m, vx, vy, cxy, A, B, adj, shared)
+        q += (fit.bin_observed[b] - (fit.A + fit.B * fit.bin_centers[b]))^2 / v
+    end
+    return q
+end
+
+# Equal-width bins over all pairs' reported values, fixed across iterations: bin b holds
+# x_min + (b-1)·w ≤ r < x_min + b·w, decided by comparison with those edges (not by
+# rounding (r - x_min)/w, which can put a value on an edge in the bin below), and the last
+# bin everything above its lower edge. Values whose range is at most _CAL_EQUAL_REL of the
+# largest are one value in one bin: split one ulp apart, their bins carry no slope.
+function _calibration_bins(reported, n_bins)
+    x_min, x_max = extrema(reported)
+    x_max - x_min > _CAL_EQUAL_REL * x_max || return ones(Int, length(reported))
+    w = (x_max - x_min) / n_bins
+    edges = [x_min + b * w for b in 1:n_bins-1]
+    return [searchsortedlast(edges, r) + 1 for r in reported]
 end
 
 # Variance of the single bin's mean: from the pairs' covariance shapes when given, else
@@ -261,9 +289,15 @@ When the free fit cannot separate the two terms (slope not positive and at least
 standard errors, or R² < 0.1: a narrow range of reported precisions, or a dominant
 motion term), or the reported precisions fill fewer than 3 bins so no free fit exists,
 both one-parameter models are fit, the CRLB scale alone (σ_motion = 0) and the motion
-term alone (k = 1), the better-fitting one is applied (the CRLB scale on a tie, as with
-a single reported precision, where both fit exactly), and `warning` says which (also
-as a logged warning). When both a motion term and a CRLB scale matter but the data
+term alone (k = 1). The CRLB scale alone, which keeps the reported covariance's shape,
+is applied unless the motion term fits the bins significantly better: its chi-square
+`Q = Σ_b (ȳ_b - ŷ_b)² / Var(ȳ_b)` (bin means ȳ_b, fitted values ŷ_b, and each bin
+mean's variance under that fit from its pairs' covariances, the cut and shared
+localizations) must be lower than the scale fit's by more than 3.84, the 95% point of
+chi²(1). With a single bin both fit exactly and the scale is applied. Reported
+precisions whose range is at most 1e-12 of the largest are one value (one bin).
+`warning` says which model was applied (also as a logged warning). When both a motion
+term and a CRLB scale matter but the data
 cannot separate them (typically 800 pairs or fewer), neither one-parameter model is
 exact: the applied variance stays close near the median σ but can be off by tens of
 percent at the extremes. Falls back gracefully (returns `calibration_applied=false`) if
@@ -350,6 +384,14 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         length(dx_vec) > n_before && (n_tracks_used += 1)
     end
 
+    # The track filter is deprecated and ignored (see CalibrationConfig): it dropped tracks
+    # by their chi² under the uncalibrated CRLB, which are the tracks that show k > 1, and
+    # biased k_scale toward 1 (true k 1.5 gave 1.05). The fit's own cut leaves out
+    # mismatched pairs. Warned before any return, so small data hear it too.
+    config.filter_high_chi2 && @warn "CalibrationConfig(filter_high_chi2 = true) is " *
+        "deprecated and ignored: dropping tracks by their uncalibrated chi² biased " *
+        "k_scale toward 1. The fit already leaves out mismatched pairs." maxlog = 1
+
     n_pairs = length(dx_vec)
     mean_chi2 = n_pairs > 0 ?
         mean(_pair_chi2.(dx_vec, dy_vec, var_x_vec, var_y_vec, cov_xy_vec, det_vec)) : NaN
@@ -359,15 +401,6 @@ function analyze_calibration(smld::BasicSMLD{T,E},
         return _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts,
                                 "Too few frame-to-frame pairs ($n_pairs < $_CAL_MIN_PAIRS)")
     end
-
-    # The track filter is deprecated and ignored (see CalibrationConfig): it dropped tracks
-    # by their chi² under the uncalibrated CRLB, which are the tracks that show k > 1, and
-    # biased k_scale toward 1 (true k 1.5 gave 1.05). The fit's own cut leaves out
-    # mismatched pairs.
-    config.filter_high_chi2 && @warn "CalibrationConfig(filter_high_chi2 = true) is " *
-        "deprecated and ignored: dropping tracks by their uncalibrated chi² biased " *
-        "k_scale toward 1. The fit already leaves out mismatched pairs." maxlog = 1
-    n_tracks_filtered = 0
 
     # Model, per axis, for the difference of two consecutive localizations of one
     # emitter: Var(Δx) = A + B·(σ_x1² + σ_x2²). Each localization carries its own
@@ -392,13 +425,8 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     reported_all = ((var_x_vec .+ var_y_vec) ./ 2) .* 1e6
     observed_all = (((dx_vec .^ 2 .+ dy_vec .^ 2) ./ 2) .* 1e6) ./ _CAL_TRUNC_FACTOR
 
-    # Equal-width bins over all pairs, fixed across iterations: bin b holds
-    # x_min + (b-1)·w ≤ r < x_min + b·w, the last bin everything above its lower edge.
-    x_min, x_max = extrema(reported_all)
     n_bins = 20
-    bin_width = (x_max - x_min) / n_bins
-    edges = [x_min + b * bin_width for b in 1:n_bins-1]
-    bin_of = [bin_width > 0 ? searchsortedlast(edges, r) + 1 : 1 for r in reported_all]
+    bin_of = _calibration_bins(reported_all, n_bins)
 
     # Start from the median: with A = 0, chi²/B is chi²(2), whose median is 2·log(2).
     z_raw = _pair_chi2.(dx_nm, dy_nm, vx_nm2, vy_nm2, cxy_nm2, det_nm4)
@@ -410,8 +438,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
                                                dx_nm, dy_nm, vx_nm2, vy_nm2, cxy_nm2,
                                                det_nm4, A0, B0; adj = adj_vec,
                                                shared = shared_nm2, kw...)
-    fallback(msg, n) = _fallback_result(mean_chi2, n, n_tracks_used, frame_shifts, msg;
-                                        n_tracks_filtered=n_tracks_filtered)
+    fallback(msg, n) = _fallback_result(mean_chi2, n, n_tracks_used, frame_shifts, msg)
     too_few(n) = "Too few pairs in the fit after the chi² cut ($n < $_CAL_MIN_PAIRS)"
     # Pairs a fit actually used: kept by the cut and in a bin with enough pairs.
     used(f) = f isa String ? 0 : f.n_used
@@ -420,17 +447,17 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     # No free fit when the reported precisions fill fewer than 3 bins (a narrow or
     # single value): the one-parameter fits below still determine the total.
     free = fit isa String ? nothing : fit   # reported as A, B, errors, R² and the bins
-    free !== nothing && used(free) < _CAL_MIN_PAIRS &&
-        return fallback(too_few(used(free)), used(free))
 
     # The free fit separates a motion term from the CRLB scale only when its slope is
     # positive and determined (B > 0, B ≥ 3 standard errors, R² ≥ 0.1). When it is not,
     # one parameter must go: either the reported precisions span too narrow a range to
     # tell the two terms apart, or a motion term dominates and the observed variance
     # barely changes with the CRLB. Both one-parameter models are fit, the CRLB scale
-    # alone (σ_motion = 0) and the motion term alone (CRLB as reported, k = 1), and the
-    # one that fits the bins better is applied. On a narrow range both give the right
-    # total; on a wide range only the right one follows the data across the range.
+    # alone (σ_motion = 0) and the motion term alone (CRLB as reported, k = 1). The scale
+    # alone keeps the reported covariance's shape and is applied unless the motion term
+    # fits the bins significantly better (_CAL_MOTION_CHI2). On a narrow range both give
+    # the right total, and the data cannot tell the per-axis split or σ_xy apart; on a
+    # wide range only the right one follows the data across the range.
     # A determined free fit with A < 0 refits the scale alone: the bound σ_motion² ≥ 0
     # binds, and keeping the slope fitted jointly with the negative intercept moves the
     # applied variance away from the data.
@@ -454,14 +481,20 @@ function analyze_calibration(smld::BasicSMLD{T,E},
             return fallback("Neither the CRLB scale nor a motion term is determined ($why)",
                             nmax)
         end
-        # Lower misfit wins; a tie goes to the CRLB scale. With one bin both models fit
-        # it exactly (misfit 0 up to rounding), so without a tolerance rounding chose.
-        use_scale = sok && (!mok || sfit.misfit <= mfit.misfit + _CAL_MISFIT_TIE)
+        # The motion term replaces the scale only when its chi-square over the bins is
+        # lower by more than the χ²(1) 95% point. With one bin both fit it exactly (both
+        # chi-squares 0), and the scale is applied.
+        qdiff = sok && mok ?
+            _fit_chi2(sfit, vx_nm2, vy_nm2, cxy_nm2, adj_vec, shared_nm2) -
+            _fit_chi2(mfit, vx_nm2, vy_nm2, cxy_nm2, adj_vec, shared_nm2) : 0.0
+        use_scale = sok && (!mok || qdiff <= _CAL_MOTION_CHI2)
         fit, keep, conv = use_scale ? (sfit, skeep, sconv) : (mfit, mkeep, mconv)
         converged = free === nothing ? conv : converged & conv
-        note = "Motion and CRLB scale not separable ($why); applied the better " *
-               "one-parameter fit: " *
-               (use_scale ? "CRLB scale alone, σ_motion = 0" : "motion term alone, k = 1")
+        note = "Motion and CRLB scale not separable ($why); applied " *
+               (use_scale ? "the CRLB scale alone, σ_motion = 0" :
+                            "the motion term alone, k = 1") *
+               (sok && mok ? " (chi² of the scale fit minus the motion fit: " *
+                             "$(round(qdiff, sigdigits=3)); motion needs > 3.84)" : "")
         @warn "analyze_calibration: $note"
     elseif fit.A < 0
         fit, keep, conv = iter(0.0, fit.B; fixA = 0.0)
@@ -494,7 +527,7 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     return CalibrationResult(
         sigma_motion_nm, k_scale,
         A * 1e-6, B, A_sigma * 1e-6, B_sigma, r_squared, mean_chi2,
-        n_pairs, n_tracks_used, n_tracks_filtered,
+        n_pairs, n_tracks_used, 0,   # n_tracks_filtered: the track filter is ignored
         bin_centers .* 1e-6, bin_observed .* 1e-6, copy(n_per_bin), frame_shifts,
         true, join(filter(!isempty, [note, converged ? "" :
               "Calibration fit did not converge in $(_CAL_MAX_ITER) iterations; the last fit was applied"]), "; "),
@@ -546,13 +579,12 @@ function apply_calibration(smld::BasicSMLD{T,E},
                      smld.n_datasets, copy(smld.metadata))
 end
 
-function _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts, warning;
-                          n_tracks_filtered=0)
+function _fallback_result(mean_chi2, n_pairs, n_tracks_used, frame_shifts, warning)
     return CalibrationResult(
         0.0, 1.0,               # sigma_motion_nm, k_scale
         0.0, 1.0, 0.0, 0.0,    # A, B, A_sigma, B_sigma
         0.0, mean_chi2,         # r_squared, mean_chi2
-        n_pairs, n_tracks_used, n_tracks_filtered,
+        n_pairs, n_tracks_used, 0,   # n_tracks_filtered: the track filter is ignored
         Float64[], Float64[], Int[],   # bin_centers, bin_observed, bin_counts
         frame_shifts,
         false, warning,
