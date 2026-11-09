@@ -295,8 +295,8 @@ standard errors, or R² < 0.1: a narrow range of reported precisions, or a domin
 motion term), or the reported precisions fill fewer than 3 bins so no free fit exists,
 both one-parameter models are fit, the CRLB scale alone (σ_motion = 0) and the motion
 term alone (k = 1). The CRLB scale alone, which keeps the reported covariance's shape,
-is applied unless the motion term fits the bins significantly better. Both are scored on
-the same observations, the pairs both fits' cuts keep, by the chi-square
+is applied unless the motion term fits the bins significantly better. Both are refit and
+scored on the same observations, the pairs both fits' cuts keep, by the chi-square
 `Q = Σ_b (ȳ_b - ŷ_b)² / Var(ȳ_b)` (bin means ȳ_b, the model's values ŷ_b, and each bin
 mean's variance under the model from its pairs' covariances, the cut and shared
 localizations); the motion term's must be lower than the scale's by more than 3.84, the
@@ -488,14 +488,21 @@ function analyze_calibration(smld::BasicSMLD{T,E},
                             nmax)
         end
         # The motion term replaces the scale only when its chi-square is lower by more
-        # than the χ²(1) 95% point. Both are scored on the same observations, the pairs
-        # both cuts keep: scored on its own cut, a fit could win by leaving out a bin it
-        # fits badly. With one bin and the same pairs both fit it exactly.
+        # than the χ²(1) 95% point. Both models are refit and scored on the same
+        # observations, the pairs both cuts keep: scored on its own cut, a fit could win by
+        # leaving out a bin it fits badly, and fitted on its own cut but scored on the
+        # common pairs, the fit whose cut kept only those would match them by
+        # construction. With one bin both fit it exactly and the scale is applied.
         qdiff = if sok && mok
             both = skeep .& mkeep
-            q = f -> _fit_chi2(f.A, f.B, both, reported_all, observed_all, bin_of, n_bins,
-                               vx_nm2, vy_nm2, cxy_nm2, adj_vec, shared_nm2)
-            q(sfit) - q(mfit)
+            q = (f, kw) -> begin
+                g = _binned_wls(reported_all, observed_all, bin_of, both, n_bins, f.A, f.B; kw...)
+                g isa String ? NaN :
+                    _fit_chi2(g.A, g.B, both, reported_all, observed_all, bin_of, n_bins,
+                              vx_nm2, vy_nm2, cxy_nm2, adj_vec, shared_nm2)
+            end
+            d = q(sfit, (fixA = 0.0,)) - q(mfit, (fixB = 1.0,))
+            isnan(d) ? 0.0 : d
         else
             0.0
         end

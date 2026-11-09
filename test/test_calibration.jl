@@ -312,6 +312,27 @@ end
         @test r.calibration_applied
         @test r.A_applied == 0
         @test abs(r.k_scale - 2) < 0.2
+        # One bin (σ 15 nm, ρ = 0.9): 120 pairs displaced √8.5 σ per axis along the major
+        # axis and 10 by 120 nm. The scale fit keeps all 130, the motion fit 120. Each
+        # fitted on its own cut but scored on the common 120, the motion fit matched them
+        # by construction and a 27 nm motion term was applied; refit on the common pairs,
+        # both fit the one bin exactly and the scale is applied.
+        σ, ρ = 0.015, 0.9
+        em = Emitter2DFit{Float64}[]
+        for t in 1:130
+            x0, y0 = 5.0 + 2 * mod(t - 1, 13), 5.0 + 2 * div(t - 1, 13)
+            d = t <= 120 ? σ * sqrt(8.5) : 0.12
+            push!(em, Emitter2DFit{Float64}(x0, y0, 1000.0, 10.0, σ, σ, ρ * σ^2, 30.0, 3.0,
+                                            1, 1, t, 0))
+            push!(em, Emitter2DFit{Float64}(x0 + d, y0 + d, 1000.0, 10.0, σ, σ, ρ * σ^2,
+                                            30.0, 3.0, 2, 1, t, 0))
+        end
+        r = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            SMLMFrameConnection.analyze_calibration(make_test_smld(em; n_frames = 2),
+                                                    CalibrationConfig(clamp_k_to_one = false))
+        end
+        @test r.calibration_applied
+        @test r.A_applied == 0
     end
 
     @testset "each one-parameter candidate needs 100 pairs of its own" begin
