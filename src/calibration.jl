@@ -140,13 +140,16 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
             bin_observed = bin_observed, n_per_bin = n_per_bin, n_used = sum(n_per_bin))
 end
 
-# Equal-width bins over all pairs' reported values, fixed across iterations: bin b holds
+# Equal-width bins, fixed across iterations, spanning the reported values in `span` (the
+# pairs the first cut keeps: one rejected pair with an outsized reported value would
+# otherwise stretch the range and crowd every kept pair into one bin). Bin b holds
 # x_min + (b-1)·w ≤ r < x_min + b·w, decided by comparison with those edges (not by
-# rounding (r - x_min)/w, which can put a value on an edge in the bin below), and the last
-# bin everything above its lower edge. Values whose range is at most _CAL_EQUAL_REL of the
-# largest are one value in one bin: split one ulp apart, their bins carry no slope.
-function _calibration_bins(reported, n_bins)
-    x_min, x_max = extrema(reported)
+# rounding (r - x_min)/w, which can put a value on an edge in the bin below); values below
+# the span go to the first bin and the last bin holds everything above its lower edge.
+# Values whose range is at most _CAL_EQUAL_REL of the largest are one value in one bin:
+# split one ulp apart, their bins carry no slope.
+function _calibration_bins(reported, n_bins, span = reported)
+    x_min, x_max = extrema(span)
     x_max - x_min > _CAL_EQUAL_REL * x_max || return ones(Int, length(reported))
     w = (x_max - x_min) / n_bins
     edges = [x_min + b * w for b in 1:n_bins-1]
@@ -320,13 +323,15 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     reported_all = ((var_x_vec .+ var_y_vec) ./ 2) .* 1e6
     observed_all = (((dx_vec .^ 2 .+ dy_vec .^ 2) ./ 2) .* 1e6) ./ _CAL_TRUNC_FACTOR
 
-    n_bins = 20
-    bin_of = _calibration_bins(reported_all, n_bins)
-
     # Start from the median: with A = 0, chi²/B is chi²(2), whose median is 2·log(2).
     z_raw = _pair_chi2.(dx_nm, dy_nm, vx_nm2, vy_nm2, cxy_nm2, det_nm4)
     A = 0.0
     B = median(z_raw) / (2 * log(2))
+
+    # Bins span the pairs the first cut keeps (at least half: B is set from the median).
+    n_bins = 20
+    bin_of = _calibration_bins(reported_all, n_bins,
+                               reported_all[z_raw .<= _CAL_CHI2_CUT * B])
 
     iter(A0, B0; kw...) = _iterate_calibration(reported_all, observed_all, bin_of, n_bins,
                                                dx_nm, dy_nm, vx_nm2, vy_nm2, cxy_nm2,

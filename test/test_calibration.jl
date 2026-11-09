@@ -202,6 +202,21 @@ end
         end
     end
 
+    @testset "a rejected pair does not set the bin range" begin
+        # 100 pairs each at reported 100, 200 and 300 nm² (half at 1.2x, half at 1.8x:
+        # k² = 1.5) and one pair at 20000 nm² far beyond the cut. Bins spanning all pairs
+        # put the 300 kept pairs in one bin, and the calibration fell back.
+        rows = vcat([(r, f * r, 50) for r in (100.0, 200.0, 300.0) for f in (1.2, 1.8)],
+                    [(20000.0, 1e6, 1)])
+        r = SMLMFrameConnection.analyze_calibration(rows_smld(rows),
+                CalibrationConfig(clamp_k_to_one = false))
+        @test r.calibration_applied
+        @test r.k_scale ≈ sqrt(1.5) rtol = 1e-3
+        # Below the span: the first bin; above it: the last.
+        @test SMLMFrameConnection._calibration_bins([1.0, 5.0, 10.0, 15.0, 30.0], 2,
+                                                    [5.0, 15.0]) == [1, 1, 2, 2, 2]
+    end
+
     @testset "a bound refit needs 3 bins after its own cut" begin
         # Determined free fits with A < 0, refit with A = 0. That refit's own cut left out
         # pairs until fewer than 3 bins remained, and k ≈ 2 was applied from them with no
