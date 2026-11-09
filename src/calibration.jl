@@ -21,9 +21,9 @@ const _CAL_MIN_SLOPE_SIGNIF = 3.0
 # Fewest frame-to-frame pairs a calibration is applied from (after the cut).
 const _CAL_MIN_PAIRS = 100
 # When the two terms are not separable, the CRLB scale alone is applied unless the motion
-# term alone lowers the bins' chi-square (_fit_chi2) by more than this: the 95% point of
-# chi²(1). Both models have one parameter, so this asks the motion term's AIC to be lower
-# by the same amount.
+# term alone fits the bins better by more than this (_motion_chi2_gain): the 95% point of
+# chi²(1), so a motion term is applied with probability at most 5% when the scale alone
+# is right.
 const _CAL_MOTION_CHI2 = 3.841458820694124
 # Reported precisions whose range is at most this fraction of the largest are one value
 # (one bin): equal to within rounding.
@@ -202,24 +202,35 @@ function _binned_wls(reported, observed, bin_of, keep, n_bins, A, B;
             bin_observed = bin_observed, n_per_bin = n_per_bin, n_used = sum(n_per_bin))
 end
 
-# Chi-square of the model (A, B) over the pairs in `keep`, binned as in _binned_wls (bins
-# of 5 or more): Σ_b (ȳ_b - (A + B·x̄_b))² / Var(ȳ_b), with each bin mean's variance from
-# its pairs' covariances under the model (_model_var_of_mean: the cut's truncation, the
-# covariance shape and pairs that share a localization). Two models compared on the same
-# `keep` are scored on the same observations; under a model it is about chi² with
-# (bins - parameters) degrees of freedom.
-function _fit_chi2(A, B, keep, reported, observed, bin_of, n_bins, vx, vy, cxy, adj, shared)
+# How much better the motion term alone (k = 1) fits than the CRLB scale alone, as a test
+# under the scale model. Both are fit to the same observations: the pairs `keep` that the
+# scale fit (A = 0, B = Bs) keeps, binned as in _binned_wls (bins of 5 or more), whose
+# truncation correction is exact when the scale is right; and with the same weights, each
+# bin mean's inverse variance under that scale fit (_model_var_of_mean: the cut, the
+# covariance shape, pairs that share a localization). Returns Q_scale - Q_motion, each the
+# weighted residual sum of squares of its own weighted least-squares fit (A ≥ 0). Both
+# models restrict the line A + B·x, so the difference is at most the line's improvement
+# over the scale alone, which is chi²(1) under the scale model: it exceeds 3.84 with
+# probability at most 5% then. With one bin both fit it exactly and the difference is 0.
+function _motion_chi2_gain(Bs, keep, reported, observed, bin_of, n_bins, vx, vy, cxy, adj,
+                           shared)
     members = [Int[] for _ in 1:n_bins]
     for i in eachindex(reported)
         keep[i] && push!(members[bin_of[i]], i)
     end
-    q = 0.0
+    xs, ys, ws = Float64[], Float64[], Float64[]
     for m in members
         length(m) >= 5 || continue
-        v = _model_var_of_mean(m, vx, vy, cxy, max(A, 0.0), B, adj, shared)
-        q += (mean(@view observed[m]) - (A + B * mean(@view reported[m])))^2 / v
+        v = _model_var_of_mean(m, vx, vy, cxy, 0.0, Bs, adj, shared)
+        v > 0 || continue
+        push!(xs, mean(@view reported[m]))
+        push!(ys, mean(@view observed[m]))
+        push!(ws, 1 / v)
     end
-    return q
+    length(xs) >= 2 || return 0.0
+    B = sum(ws .* xs .* ys) / sum(ws .* xs .^ 2)        # scale alone
+    A = max(sum(ws .* (ys .- xs)) / sum(ws), 0.0)        # motion alone
+    return sum(ws .* (ys .- B .* xs) .^ 2) - sum(ws .* (ys .- (A .+ xs)) .^ 2)
 end
 
 # Equal-width bins over all pairs' reported values, fixed across iterations: bin b holds
@@ -295,16 +306,20 @@ standard errors, or R² < 0.1: a narrow range of reported precisions, or a domin
 motion term), or the reported precisions fill fewer than 3 bins so no free fit exists,
 both one-parameter models are fit, the CRLB scale alone (σ_motion = 0) and the motion
 term alone (k = 1). The CRLB scale alone, which keeps the reported covariance's shape,
-is applied unless the motion term fits the bins significantly better. Both are refit and
-scored on the same observations, the pairs both fits' cuts keep, by the chi-square
-`Q = Σ_b (ȳ_b - ŷ_b)² / Var(ȳ_b)` (bin means ȳ_b, the model's values ŷ_b, and each bin
-mean's variance under the model from its pairs' covariances, the cut and shared
-localizations); the motion term's must be lower than the scale's by more than 3.84, the
-95% point of chi²(1). With a single bin both fit exactly and the scale is applied. Reported
-precisions whose range is at most 1e-12 of the largest are one value (one bin).
-`warning` says which model was applied (also as a logged warning). When both a motion
-term and a CRLB scale matter but the data
-cannot separate them (typically 800 pairs or fewer), neither one-parameter model is
+is applied unless the motion term fits the bins significantly better, tested under the
+scale model: both are fit by weighted least squares to the same bin means, those of the
+pairs the scale fit keeps (whose truncation correction is exact if the scale is right),
+with the same weights 1/Var(ȳ_b), each bin mean's variance under the scale fit from its
+pairs' covariances, the cut and shared localizations. The motion term is applied only when
+its weighted residual sum of squares `Q = Σ_b (ȳ_b - ŷ_b)² / Var(ȳ_b)` is lower than the
+scale's by more than 3.84, the 95% point of chi²(1). Both models restrict the line
+`A + B·x`, so under the scale model the difference is at most that line's χ²(1)
+improvement: a motion term is applied with probability at most 5% when the scale alone is
+right. With a single bin both fit exactly and the scale is applied. Reported precisions
+whose range is at most 1e-12 of the largest are one value (one bin). `warning` says
+which model was applied (also as a logged warning). When both a motion term and a CRLB
+scale matter but the data cannot separate them (typically 800 pairs or fewer), neither
+one-parameter model is
 exact: the applied variance stays close near the median σ but can be off by tens of
 percent at the extremes. Falls back gracefully (returns `calibration_applied=false`) if
 fewer than 100 frame-to-frame pairs are available, fewer than 100 remain in the applied
@@ -487,32 +502,21 @@ function analyze_calibration(smld::BasicSMLD{T,E},
             return fallback("Neither the CRLB scale nor a motion term is determined ($why)",
                             nmax)
         end
-        # The motion term replaces the scale only when its chi-square is lower by more
-        # than the χ²(1) 95% point. Both models are refit and scored on the same
-        # observations, the pairs both cuts keep: scored on its own cut, a fit could win by
-        # leaving out a bin it fits badly, and fitted on its own cut but scored on the
-        # common pairs, the fit whose cut kept only those would match them by
-        # construction. With one bin both fit it exactly and the scale is applied.
-        qdiff = if sok && mok
-            both = skeep .& mkeep
-            q = (f, kw) -> begin
-                g = _binned_wls(reported_all, observed_all, bin_of, both, n_bins, f.A, f.B; kw...)
-                g isa String ? NaN :
-                    _fit_chi2(g.A, g.B, both, reported_all, observed_all, bin_of, n_bins,
-                              vx_nm2, vy_nm2, cxy_nm2, adj_vec, shared_nm2)
-            end
-            d = q(sfit, (fixA = 0.0,)) - q(mfit, (fixB = 1.0,))
-            isnan(d) ? 0.0 : d
-        else
-            0.0
-        end
+        # The motion term replaces the scale only when it fits better by more than the
+        # χ²(1) 95% point, tested under the scale model (_motion_chi2_gain): both fit to the
+        # pairs the scale fit keeps, with the same weights. Each fit scored on its own cut
+        # could win by leaving out pairs or a bin it fits badly, and on the pairs both
+        # cuts keep, the second cut biases bins whose covariance shapes differ.
+        qdiff = sok && mok ?
+            _motion_chi2_gain(sfit.B, skeep, reported_all, observed_all, bin_of, n_bins,
+                              vx_nm2, vy_nm2, cxy_nm2, adj_vec, shared_nm2) : 0.0
         use_scale = sok && (!mok || qdiff <= _CAL_MOTION_CHI2)
         fit, keep, conv = use_scale ? (sfit, skeep, sconv) : (mfit, mkeep, mconv)
         converged = free === nothing ? conv : converged & conv
         note = "Motion and CRLB scale not separable ($why); applied " *
                (use_scale ? "the CRLB scale alone, σ_motion = 0" :
                             "the motion term alone, k = 1") *
-               (sok && mok ? " (chi² of the scale fit minus the motion fit: " *
+               (sok && mok ? " (chi² gain of the motion term over the scale: " *
                              "$(round(qdiff, sigdigits=3)); motion needs > 3.84)" : "")
         @warn "analyze_calibration: $note"
     elseif fit.A < 0

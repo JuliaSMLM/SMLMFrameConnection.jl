@@ -335,6 +335,32 @@ end
         @test r.A_applied == 0
     end
 
+    @testset "the motion term is tested under the scale model" begin
+        # Two reported precisions 1% apart with different covariance shapes (ρ = 0 and
+        # 0.5), true CRLB scale k = 2, no motion, 50,000 pairs each. Scored on the pairs
+        # both cuts keep, the motion fit's cut trimmed the correlated bin beyond what the
+        # truncation correction assumes, and a motion term of 8.7 nm won in seeds 2 and 4.
+        n = 50_000
+        for seed in (2, 4)
+            a = calibration_fixture(k = 2.0, σ_motion = 0.0, ρ = 0.0, ntracks = n,
+                                    nframes = 2, seed = seed, photons = (169.0, 169.0))
+            b = calibration_fixture(k = 2.0, σ_motion = 0.0, ρ = 0.5, ntracks = n,
+                                    nframes = 2, seed = seed + 1000,
+                                    photons = (169.0 / 1.0201, 169.0 / 1.0201))
+            em = vcat(a.emitters,
+                      [Emitter2DFit{Float64}(e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy,
+                                             1.0, 1.0, e.frame, e.dataset, e.track_id + n,
+                                             e.id) for e in b.emitters])
+            r = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+                SMLMFrameConnection.analyze_calibration(
+                    BasicSMLD(em, a.camera, 2, 1, Dict{String,Any}()), CalibrationConfig())
+            end
+            @test r.calibration_applied
+            @test r.A_applied == 0
+            @test abs(r.k_scale - 2) < 0.02
+        end
+    end
+
     @testset "each one-parameter candidate needs 100 pairs of its own" begin
         # One reported precision, ρ = 0.9: 97 pairs displaced along the covariance's major
         # axis and 3 along its minor axis. The scale fit's cut (B·Σ, narrow across the
