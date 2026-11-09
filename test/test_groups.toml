@@ -1,0 +1,6 @@
+# Test groups (admiral decision 0008). Core: test/*.jl, the fast curated tests.
+# Long: test/long/, slow correctness checks run on a lab machine.
+
+[Core]
+
+[Long]

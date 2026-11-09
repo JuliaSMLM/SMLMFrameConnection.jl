@@ -22,7 +22,7 @@ Main entry point. Connects repeated localizations and combines them.
 ```julia
 combinelocalizations(smld::BasicSMLD) -> BasicSMLD
 ```
-Combines emitters sharing the same `track_id` using MLE weighted mean. Use when `track_id` is already populated.
+Combines emitters sharing the same `track_id` within a dataset using the MLE weighted mean (full 2×2 covariance). `track_id` 0 (unlinked) localizations and tracks of one pass through unchanged. Use when `track_id` is already populated.
 
 ### defineidealFC
 ```julia
@@ -107,9 +107,10 @@ end
 Input `BasicSMLD` must contain emitters with position uncertainties.
 
 **Required fields:**
-- `x`, `y`: Position (microns)
-- `σ_x`, `σ_y`: Position uncertainties (microns) - must be > 0 for MLE
-- `frame`: Frame number (1-based)
+- `x`, `y`: Position (microns), finite
+- `σ_x`, `σ_y`: Position uncertainties (microns), finite and > 0
+- `σ_xy`: Position covariance (μm²); positive definite covariance, `|σ_xy| < σ_x σ_y`
+- `frame`: Frame number; for `frameconnect`, ≥ 1 and `smld.n_frames` ≥ largest frame, or 0 (unknown)
 
 **Optional fields:**
 - `photons`, `σ_photons`: Photon count (summed in output)
@@ -117,13 +118,29 @@ Input `BasicSMLD` must contain emitters with position uncertainties.
 - `dataset`: Dataset identifier (default: 1)
 - `track_id`: Set to 0 for input (populated by algorithm)
 
+`frameconnect` refuses input that breaks these with an `ArgumentError` naming the
+localization and field; `combinelocalizations` checks the same except the frame rules.
+2D only: emitters that carry `z` are refused. Input order does not matter:
+`frameconnect` sorts a copy by every field, and `info.connected` keeps the caller's order.
+
+## Calibration (optional)
+
+`FrameConnectConfig(calibration = CalibrationConfig())` fits, per axis, the variance of
+the difference of consecutive localizations in a track, `Var(Δx) = A + B·(σ_x1² + σ_x2²)`,
+with `A = 2σ_motion²` and `B = k²`, and applies `Σ = σ_motion² I + k² Σ_CRLB` before the
+combination. `info.calibration::CalibrationResult` holds the applied `k_scale` and
+`sigma_motion_nm`, the free fit (`A`, `B`, errors, R², bins) for diagnostic plots, the
+applied `A_applied`/`B_applied`, and `warning`. `CalibrationConfig` fields:
+`clamp_k_to_one = true`; `filter_high_chi2` and `chi2_filter_threshold` are deprecated and
+ignored.
+
 ## Output
 
 Output `combined` contains emitters with:
-- Combined position via MLE weighted mean: `x = Σ(x/σ²) / Σ(1/σ²)`
-- Reduced uncertainties: `σ = √(1/Σ(1/σ²))`
+- Combined position via MLE weighted mean with the full 2×2 covariance: `Σ = (Σᵢ Σᵢ⁻¹)⁻¹`, `μ = Σ Σᵢ Σᵢ⁻¹ xᵢ` (per axis, without correlation: `x = Σ(x/σ²) / Σ(1/σ²)`, `σ = √(1/Σ(1/σ²))`)
 - Summed photons
-- `track_id` indicating connection group
+- `track_id` indicating connection group; frame, dataset and id of the track's earliest localization
+- A track of one localization, and each `track_id` 0 localization, unchanged
 
 ## Dependencies
 

@@ -15,8 +15,13 @@ localizations in each pre-cluster, and 4) combining the connected localizations
 using their MLE position estimate assuming Gaussian noise.
 
 # Arguments
-- `smld::BasicSMLD`: Localizations to connect. Must contain emitters with valid
-                     position uncertainties (σ_x, σ_y).
+- `smld::BasicSMLD`: 2D localizations to connect, in any order. Positions must be
+                     finite, σ_x and σ_y finite and > 0 with a positive-definite
+                     covariance, frames 1-based and at most `n_frames` (when it is
+                     set); otherwise an `ArgumentError` names the localization. Localizations that
+                     carry z (3D) are refused with an `ArgumentError`; output emitters are
+                     `Emitter2DFit`, so fields beyond those (e.g. a fit p-value) are not
+                     carried into `info.connected`.
 - `config::FrameConnectConfig`: Configuration parameters (optional, can use kwargs instead)
 
 # Keyword Arguments (equivalent to FrameConnectConfig fields)
@@ -64,6 +69,8 @@ end
 
 function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T, E<:SMLMData.AbstractEmitter}
     t_start = time()
+    _check_2d(smld, "frameconnect")
+    _check_inputs(smld, "frameconnect")
 
     # Degrade gracefully on empty input: there is nothing to connect, so return
     # the (empty) input unchanged with a zeroed info. This short-circuits before
@@ -91,6 +98,13 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
         return (smld, info)
     end
 
+    # Run the pipeline on a copy sorted by (dataset, frame, x, y), ties broken by the
+    # other fields, so the result does not depend on the order of the input; track IDs
+    # are mapped back to input order.
+    perm = sortperm(smld.emitters; by = _order_key)
+    smld_sorted = BasicSMLD(smld.emitters[perm], smld.camera, smld.n_frames,
+                            smld.n_datasets, smld.metadata)
+
     # Prepare a ParamStruct to keep track of parameters used.
     params = ParamStruct()
     params.n_density_neighbors = config.n_density_neighbors
@@ -99,9 +113,10 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
     params.max_neighbors = config.max_neighbors
 
     # Generate pre-clusters of localizations in `smld`.
-    smld_preclustered = precluster(smld, params)
+    smld_preclustered = precluster(smld_sorted, params)
     clusterdata = organizeclusters(smld_preclustered)
     n_preclusters = length(clusterdata)
+    _warn_large_preclusters(clusterdata, params)
 
     # Estimate rate parameters.
     params.k_on, params.k_off, params.k_bleach, params.p_miss =
@@ -117,31 +132,39 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
     # Connect localizations in `smld` by solving the LAP.
     # Extract track_id from preclustered emitters
     connectID_precluster = [e.track_id for e in smld_preclustered.emitters]
-    connectID_final = connectlocalizations(connectID_precluster,
+    connectID_sorted = connectlocalizations(connectID_precluster,
         clusterdata, params, nframes)
+    connectID_final = Vector{Int}(undef, length(connectID_sorted))
+    connectID_final[perm] = connectID_sorted
 
-    # Create smld_connected with updated track_id
+    # Connected localizations, in the sorted order: calibration and combination run on
+    # these, so every stage sees one order and `combined` does not depend on the input
+    # order either. `info.connected` is the same localizations in the caller's order.
     # Use emitter's native precision, not SMLD's type parameter
-    emitters = smld.emitters
-    ET = typeof(first(emitters).x)  # Get precision from emitter fields
-    new_emitters = Vector{SMLMData.Emitter2DFit{ET}}(undef, length(emitters))
-    for i in 1:length(emitters)
-        e = emitters[i]
-        new_emitters[i] = SMLMData.Emitter2DFit{ET}(
+    emitters_sorted = smld_sorted.emitters
+    ET = typeof(first(emitters_sorted).x)  # Get precision from emitter fields
+    connected_sorted = Vector{SMLMData.Emitter2DFit{ET}}(undef, length(emitters_sorted))
+    for i in eachindex(emitters_sorted)
+        e = emitters_sorted[i]
+        connected_sorted[i] = SMLMData.Emitter2DFit{ET}(
             e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy, e.σ_photons, e.σ_bg,
-            e.frame, e.dataset, connectID_final[i], e.id
+            e.frame, e.dataset, connectID_sorted[i], e.id
         )
     end
-    smld_connected = BasicSMLD(new_emitters, smld.camera, smld.n_frames,
-                                smld.n_datasets, copy(smld.metadata))
+    smld_connected_sorted = BasicSMLD(connected_sorted, smld.camera, smld.n_frames,
+                                      smld.n_datasets, copy(smld.metadata))
+    connected_caller = similar(connected_sorted)
+    connected_caller[perm] = connected_sorted
+    smld_connected = BasicSMLD(connected_caller, smld.camera, smld.n_frames,
+                               smld.n_datasets, copy(smld.metadata))
 
     # Optional uncertainty calibration (between connection and combination)
     cal_result = nothing
-    smld_to_combine = smld_connected
+    smld_to_combine = smld_connected_sorted
     if config.calibration !== nothing
-        cal_result = analyze_calibration(smld_connected, config.calibration)
+        cal_result = analyze_calibration(smld_connected_sorted, config.calibration)
         if cal_result.calibration_applied
-            smld_to_combine = apply_calibration(smld_connected, cal_result)
+            smld_to_combine = apply_calibration(smld_connected_sorted, cal_result)
         end
     end
 
@@ -181,4 +204,24 @@ function frameconnect(smld::BasicSMLD{T,E}, config::FrameConnectConfig) where {T
     )
 
     return (smld_combined, info)
+end
+
+# The LAP on a precluster of N localizations is a 2N x 2N assignment problem, whose time
+# grows as N^3 (about a minute at N = 2000). Preclusters are the connected components of
+# the neighbor links, so very dense data (several active emitters per um^2 per frame) or
+# dense clusters can join into very large ones.
+const _LARGE_PRECLUSTER = 2000
+
+function _warn_large_preclusters(clusterdata, params::ParamStruct)
+    isempty(clusterdata) && return nothing
+    sizes = size.(clusterdata, 1)
+    nmax = maximum(sizes)
+    if nmax > _LARGE_PRECLUSTER
+        @warn "frameconnect: $(count(>(_LARGE_PRECLUSTER), sizes)) precluster(s) hold more " *
+              "than $(_LARGE_PRECLUSTER) localizations (largest: $nmax). Linking time grows " *
+              "as the cube of a precluster's size; a smaller max_sigma_dist " *
+              "($(params.max_sigma_dist)) or max_frame_gap ($(params.max_frame_gap)) " *
+              "keeps preclusters smaller."
+    end
+    return nothing
 end

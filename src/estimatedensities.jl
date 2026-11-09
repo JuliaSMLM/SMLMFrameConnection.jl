@@ -1,9 +1,10 @@
 using SMLMData
 using NearestNeighbors
+using Statistics
 
 """
     initial_density = estimatedensities(smld::BasicSMLD{T,E},
-        clusterdata::Vector{Matrix{Float32}}, params::ParamStruct) where {T, E<:SMLMData.AbstractEmitter}
+        clusterdata::Vector{Matrix{Float64}}, params::ParamStruct) where {T, E<:SMLMData.AbstractEmitter}
 
 Estimate local emitter densities for clusters in `smld` and `clusterdata`.
 
@@ -14,7 +15,7 @@ throughout the entire set of data as well as some of the rate parameters
 provided in `params`.
 """
 function estimatedensities(smld::BasicSMLD{T,E},
-    clusterdata::Vector{Matrix{Float32}},
+    clusterdata::Vector{Matrix{Float64}},
     params::ParamStruct) where {T, E<:SMLMData.AbstractEmitter}
 
     # Define some new parameters.
@@ -35,6 +36,11 @@ function estimatedensities(smld::BasicSMLD{T,E},
         else
             clusterarea = (maximum(clusterdata[1][:, 1]) - minimum(clusterdata[1][:, 1])) *
                           (maximum(clusterdata[1][:, 2]) - minimum(clusterdata[1][:, 2]))
+            # Localizations sharing an x or a y value span zero area; floor the area at
+            # the localization error ellipse so the density stays finite.
+            locarea = pi * Statistics.mean(clusterdata[1][:, 3]) *
+                      Statistics.mean(clusterdata[1][:, 4])
+            clusterarea = max(clusterarea, locarea)
             initial_density = (1 / clusterarea) *
                              ((params.k_bleach / params.k_off) / (1 - params.p_miss)) /
                              (1 - exp(-params.k_bleach * dutycycle * (maxframe - 1)))
@@ -45,36 +51,16 @@ function estimatedensities(smld::BasicSMLD{T,E},
     # Determine the center of all clusters assuming each arose from the same
     # emitter using precision-weighted mean with full covariance.
     clustercenters = zeros(2, nclusters)
+    clusterscale = zeros(nclusters)   # localization error scale √(mean σ_x · mean σ_y)
     for nn = 1:nclusters
-        # Isolate some arrays to improve readability.
         # Column layout: 1:x 2:y 3:σ_x 4:σ_y 5:σ_xy 6:frame ...
-        x = clusterdata[nn][:, 1]
-        y = clusterdata[nn][:, 2]
-        σ_x = clusterdata[nn][:, 3]
-        σ_y = clusterdata[nn][:, 4]
-        σ_xy = clusterdata[nn][:, 5]
-
-        # Compute the cluster centers using precision-weighted mean with full covariance.
-        # P = Σ⁻¹ = [σ_y² -σ_xy; -σ_xy σ_x²] / det where det = σ_x²σ_y² - σ_xy²
-        # Combined: center = (Σ Pᵢ)⁻¹ * Σ(Pᵢ * posᵢ)
-        P_sum = zeros(2, 2)
-        μ_weighted = zeros(2)
-        for i in eachindex(x)
-            det_i = σ_x[i]^2 * σ_y[i]^2 - σ_xy[i]^2
-            det_i = max(det_i, eps())  # Ensure positive definite
-            # Precision matrix elements
-            P11 = σ_y[i]^2 / det_i
-            P22 = σ_x[i]^2 / det_i
-            P12 = -σ_xy[i] / det_i
-            P_sum[1,1] += P11
-            P_sum[2,2] += P22
-            P_sum[1,2] += P12
-            P_sum[2,1] += P12
-            μ_weighted[1] += P11 * x[i] + P12 * y[i]
-            μ_weighted[2] += P12 * x[i] + P22 * y[i]
-        end
-        # Solve P_sum * center = μ_weighted
-        clustercenters[1:2, nn] = P_sum \ μ_weighted
+        # Precision-weighted mean with full covariance: center = (Σ Pᵢ)⁻¹ Σ Pᵢ posᵢ
+        c = clusterdata[nn]
+        μx, μy, _, _, _ = _precision_mean(view(c, :, 1), view(c, :, 2), view(c, :, 3),
+                                          view(c, :, 4), view(c, :, 5), axes(c, 1))
+        clustercenters[1, nn] = μx
+        clustercenters[2, nn] = μy
+        clusterscale[nn] = sqrt(Statistics.mean(view(c, :, 3)) * Statistics.mean(view(c, :, 4)))
     end
 
     # Estimate the local cluster density based on the distance to
@@ -87,12 +73,15 @@ function estimatedensities(smld::BasicSMLD{T,E},
     kdtree = NearestNeighbors.KDTree(clustercenters)
     _, nndist_raw = NearestNeighbors.knn(kdtree, clustercenters, kneighbors + 1)
 
-    # Get non-zero distances (skip self-distance which is 0)
-    # Then get the k-th nearest non-self neighbor
+    # Skip the cluster itself and any cluster at the same center, then take the k-th
+    # nearest remaining neighbor. "The same center" means closer than a millionth of the
+    # localization error: no measurement resolves that, and a center a rounding error
+    # away from an equal one (a different summation order gives one) would otherwise
+    # count as a neighbor at 1e-15 μm and a density of 1e29 per μm².
     nndist = zeros(nclusters)
     for i in 1:nclusters
-        # Filter out zero distances (self)
-        nonzero_dists = filter(d -> d > 0, nndist_raw[i])
+        same = 1e-6 * clusterscale[i]
+        nonzero_dists = filter(d -> d > same, nndist_raw[i])
         if length(nonzero_dists) >= kneighbors
             sort!(nonzero_dists)
             nndist[i] = nonzero_dists[kneighbors]  # k-th nearest non-self neighbor

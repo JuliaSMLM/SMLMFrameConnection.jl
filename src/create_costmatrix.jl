@@ -1,5 +1,5 @@
 """
-    costmatrix = create_costmatrix(clusterdata::Vector{Matrix{Float32}},
+    costmatrix = create_costmatrix(clusterdata::Vector{Matrix{Float64}},
         params::ParamStruct, clusterind::Int64, nframes::Int64,
         base_rho_on::Vector{Float64})
 
@@ -20,7 +20,7 @@ Forbidden connections are indicated by `missing`.
 `base_rho_on` is a precomputed unit-density on-state density curve of length
 `nframes`, shared across all clusters to avoid per-cluster allocation.
 """
-function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
+function create_costmatrix(clusterdata::Vector{Matrix{Float64}},
     params::ParamStruct, clusterind::Int64, nframes::Int64,
     base_rho_on::Vector{Float64})
     # Extract some entries from clusterdata and params to make the code more
@@ -53,13 +53,15 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
         # Combined covariance matrix for two localizations:
         # Σ_comb = Σ_mm + Σ_nn (variances add for independent measurements)
         σ_x² = x_se[mm]^2 + x_se[nn]^2
-        σ_y² = y_se[mm]^2 + y_se[nn]^2
         σ_xy = xy_cov[mm] + xy_cov[nn]
-        det_Σ = σ_x² * σ_y² - σ_xy^2
+        # det(Σ_mm + Σ_nn), positive for positive-definite inputs however close to
+        # singular (σ_x²σ_y² - σ_xy² of the sums cancels there)
+        det_Σ = _pair_cov_det(x_se[mm], y_se[mm], xy_cov[mm], x_se[nn], y_se[nn], xy_cov[nn])
 
-        # Mahalanobis distance: Δᵀ Σ⁻¹ Δ where Σ⁻¹ = [σ_y² -σ_xy; -σ_xy σ_x²] / det
+        # Mahalanobis distance Δᵀ Σ⁻¹ Δ, as Δx²/σ_x² + (Δy - (σ_xy/σ_x²)Δx)²·σ_x²/det:
+        # a sum of squares, never negative
         Δx, Δy = x[mm] - x[nn], y[mm] - y[nn]
-        mahal = (σ_y² * Δx^2 - 2*σ_xy*Δx*Δy + σ_x² * Δy^2) / det_Σ
+        mahal = Δx^2 / σ_x² + σ_x² * (Δy - (σ_xy / σ_x²) * Δx)^2 / det_Σ
 
         # Negative log-likelihood: -log(p) = 0.5*log(2π) + 0.5*log(det) + 0.5*mahal
         separationcost = log(2*pi) + 0.5*log(det_Σ) + 0.5*mahal
@@ -81,8 +83,8 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
         deltaframe_future = min(max_frame_gap, nframes - frm)
         # Localization uncertainty ellipse area (μm²) to make density dimensionless
         # Area = π√det(Σ) where det(Σ) = σ_x²σ_y² - σ_xy²
-        det_loc = x_se[nn]^2 * y_se[nn]^2 - xy_cov[nn]^2
-        loc_area = pi * sqrt(max(det_loc, eps()))
+        det_loc = _cov_det(x_se[nn], y_se[nn], xy_cov[nn])   # > 0: the entry check holds
+        loc_area = pi * sqrt(det_loc)
         rho_off_f = rho_0 * base_rho_on[frm] * k_off / k_on
         rho_on_past = rho_0 * base_rho_on[frm - deltaframe_past]
         birthcost = -log(1-p_miss) -
@@ -97,12 +99,20 @@ function create_costmatrix(clusterdata::Vector{Matrix{Float32}},
         validcost[nn, birth_range] .= true
     end
 
-    # If any of the valid assignments (```validcost```) are inf, we should
-    # replace them with a usable value.
-    badcosts = isinf.(costmatrix)
-    if any(badcosts[validcost[:]])
-        costsum = sum(costmatrix[.!badcosts])
-        costmatrix[badcosts[:] .& validcost[:]] .= 2 * costsum
+    # A valid assignment with a non-finite cost (Inf from p_miss = 0, NaN from a
+    # degenerate density) gets a cost larger than any assignment made of finite costs,
+    # so the solver can still use it but never prefers it. The bound uses absolute
+    # values: costs can be negative, and a NaN never reaches the LAP solver (it does
+    # not return on a matrix holding NaN).
+    # A -Inf (a certain event, e.g. an infinite birth density) gets the negative of that
+    # bound, so it stays the most favorable choice.
+    badcosts = .!isfinite.(costmatrix) .& validcost
+    if any(badcosts)
+        finitecosts = costmatrix[validcost .& .!badcosts]
+        bigcost = 2 * sum(abs, finitecosts; init = 0.0f0) + 1
+        for i in findall(badcosts)
+            costmatrix[i] = costmatrix[i] == -Inf32 ? -bigcost : bigcost
+        end
     end
 
     return costmatrix

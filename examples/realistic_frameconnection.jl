@@ -48,7 +48,7 @@ function main()
     )
 
     # Simulation parameters
-    params = StaticSMLMParams(
+    params = StaticSMLMConfig(
         density = 20.0,       # Emitters per μm² (realistic dSTORM)
         σ_psf = 0.13,         # PSF width (μm) → precision = σ_psf/√photons
         minphotons = 100,     # Detection threshold
@@ -78,11 +78,12 @@ function main()
     println("\n2. Running SMLMSim simulation...")
     println("-" ^ 70)
 
-    smld_true, smld_model, smld_noisy = simulate(params;
+    smld_noisy, siminfo = simulate(params;
         molecule = fluor,
         camera = camera,
         pattern = Nmer2D(n=1, d=0.0)  # Single isolated emitters
     )
+    smld_true = siminfo.smld_true
 
     n_true_emitters = length(smld_true.emitters)
     n_localizations = length(smld_noisy.emitters)

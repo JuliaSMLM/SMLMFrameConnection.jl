@@ -9,8 +9,11 @@ Combine clustered localizations in `smld` into higher precision localizations.
 
 # Description
 This function combines localizations in `smld` that share the same value of
-track_id.  Localizations are combined assuming they arose from
-independent measurements of the same position with Gaussian errors.
+track_id within one dataset.  Localizations are combined assuming they arose from
+independent measurements of the same position with Gaussian errors. A localization
+with `track_id == 0` (SMLMData's "unlinked") is passed through on its own. Each
+combined localization takes frame, dataset and id from its track's earliest
+localization; the result does not depend on the order of the input.
 
 `track_length` is an inclusive `(min, max)` range on the number of localizations
 per track: a track is emitted only if `min <= nperID <= max`. `nothing` (the
@@ -21,13 +24,18 @@ sticky docking strands in dense DNA-PAINT data).
 """
 function combinelocalizations(smld::BasicSMLD{T,E};
     track_length::Union{Tuple{Float64,Float64},Nothing}=nothing) where {T, E<:SMLMData.AbstractEmitter}
+    _check_2d(smld, "combinelocalizations")
+    _check_inputs(smld, "combinelocalizations"; frames = false)
     # Extract arrays from emitters
     emitters = smld.emitters
     # Nothing to combine: return the (empty) input unchanged. The reductions
-    # below (`counts`, `first(emitters)`) assume at least one localization.
+    # below (`first(emitters)`) assume at least one localization.
     isempty(emitters) && return smld
     connectID = [e.track_id for e in emitters]
-    sortindices = sortperm(connectID)
+    # Order by (track, dataset, frame, x, y), ties broken by the other fields, so the
+    # result does not depend on the input order: each combined localization takes frame,
+    # dataset and id from its track's first localization in time.
+    sortindices = sortperm(emitters; by = e -> (e.track_id, _order_key(e)))
     connectID = connectID[sortindices]
     x = [e.x for e in emitters][sortindices]
     y = [e.y for e in emitters][sortindices]
@@ -42,9 +50,18 @@ function combinelocalizations(smld::BasicSMLD{T,E};
     datasetnum = [e.dataset for e in emitters][sortindices]
     id = [e.id for e in emitters][sortindices]
 
-    # Loop over clusters and combine their localization data as appropriate.
-    nperID = counts(connectID)
-    nperID = nperID[nperID .!= 0]
+    # Groups: runs of one track_id within one dataset; every track_id-0 localization
+    # is a group of its own (unlinked).
+    nperID = Int[]
+    for i in eachindex(connectID)
+        newgroup = i == 1 || connectID[i] == 0 || connectID[i] != connectID[i-1] ||
+                   datasetnum[i] != datasetnum[i-1]
+        if newgroup
+            push!(nperID, 1)
+        else
+            nperID[end] += 1
+        end
+    end
     # ncumulative is built over the FULL set of present clusters so its offsets
     # span every localization in the sorted arrays. The length filter only
     # selects which clusters to emit (`keep`); it must not alter these offsets.
@@ -77,43 +94,19 @@ function combinelocalizations(smld::BasicSMLD{T,E};
     for (out_idx, nn) in enumerate(keep)
         indices = (1:nperID[nn]) .+ ncumulative[nn]
 
+        # A group of one (an unlinked localization, or a one-localization track) comes out
+        # unchanged: _precision_mean's identical-covariance form returns it exactly.
         # Combine positions using precision-weighted mean with full 2x2 covariance.
         # For each measurement i: Σᵢ = [σ_x² σ_xy; σ_xy σ_y²], Pᵢ = Σᵢ⁻¹
         # Combined: Σ_comb = (Σ Pᵢ)⁻¹, pos_comb = Σ_comb * Σ(Pᵢ * posᵢ)
-        # Accumulate in Float64 to avoid precision loss (eps(Float32)=1.2e-7
-        # is larger than typical determinants for SMLM sigmas ~0.006 μm)
-        P_sum = zeros(Float64, 2, 2)
-        μ_weighted = zeros(Float64, 2)
-        for i in indices
-            sx2 = Float64(σ_x[i])^2
-            sy2 = Float64(σ_y[i])^2
-            sxy = Float64(σ_xy[i])
-            det_i = sx2 * sy2 - sxy^2
-            det_i = max(det_i, eps(Float64))  # Ensure positive definite
-            # Precision matrix: P = [σ_y² -σ_xy; -σ_xy σ_x²] / det
-            P11 = sy2 / det_i
-            P22 = sx2 / det_i
-            P12 = -sxy / det_i
-            P_sum[1,1] += P11
-            P_sum[2,2] += P22
-            P_sum[1,2] += P12
-            P_sum[2,1] += P12
-            μ_weighted[1] += P11 * Float64(x[i]) + P12 * Float64(y[i])
-            μ_weighted[2] += P12 * Float64(x[i]) + P22 * Float64(y[i])
-        end
-
-        # Combined covariance = inverse of summed precision
-        det_P = P_sum[1,1] * P_sum[2,2] - P_sum[1,2]^2
-        Σ_comb_11 = P_sum[2,2] / det_P  # σ_x²
-        Σ_comb_22 = P_sum[1,1] / det_P  # σ_y²
-        Σ_comb_12 = -P_sum[1,2] / det_P  # σ_xy
-
-        # Combined position (cast back to emitter precision)
-        x_combined[out_idx] = ET(Σ_comb_11 * μ_weighted[1] + Σ_comb_12 * μ_weighted[2])
-        y_combined[out_idx] = ET(Σ_comb_12 * μ_weighted[1] + Σ_comb_22 * μ_weighted[2])
-        σ_x_combined[out_idx] = ET(sqrt(Σ_comb_11))
-        σ_y_combined[out_idx] = ET(sqrt(Σ_comb_22))
-        σ_xy_combined[out_idx] = ET(Σ_comb_12)
+        # In Float64, with the summed precision's determinant carried accurately
+        # (_precision_mean); cast back to emitter precision with the covariance kept
+        # positive definite through the rounding.
+        μx, μy, Σ11, Σ22, Σ12 = _precision_mean(x, y, σ_x, σ_y, σ_xy, indices)
+        x_combined[out_idx] = ET(μx)
+        y_combined[out_idx] = ET(μy)
+        σ_x_combined[out_idx], σ_y_combined[out_idx], σ_xy_combined[out_idx] =
+            _round_cov(ET, sqrt(Σ11), sqrt(Σ22), Σ12)
 
         # Photons and background: sum (independent measurements)
         photons_combined[out_idx] = sum(photons[indices])

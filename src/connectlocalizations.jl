@@ -2,7 +2,7 @@ using StatsBase
 
 """
     connectlocalizations!(connectID::Vector{Int64},
-        clusterdata::Vector{Matrix{Float32}},
+        clusterdata::Vector{Matrix{Float64}},
         params::ParamStruct, nframes::Int64)
 
 Connect localizations in `clusterdata` by solving a linear assignment problem.
@@ -14,7 +14,7 @@ solving a linear assignment problem which designates the ideal connections
 between localizations.
 """
 function connectlocalizations!(connectID::Vector{Int64},
-    clusterdata::Vector{Matrix{Float32}}, params::ParamStruct, nframes::Int64)
+    clusterdata::Vector{Matrix{Float64}}, params::ParamStruct, nframes::Int64)
 
     # Precompute unit-density rho_on curve (shared across all clusters).
     # Each cluster scales by its own rho_0.
@@ -53,7 +53,7 @@ end
 
 """
     connectID = connectlocalizations(connectID::Vector{Int64}, 
-        clusterdata::Vector{Matrix{Float32}}, 
+        clusterdata::Vector{Matrix{Float64}}, 
         params::ParamStruct, nframes::Int64)
 
 Connect localizations in `clusterdata` by solving a linear assignment problem.
@@ -65,7 +65,7 @@ solving a linear assignment problem which designates the ideal connections
 between localizations.
 """
 function connectlocalizations(connectID::Vector{Int64},
-    clusterdata::Vector{Matrix{Float32}}, params::ParamStruct, nframes::Int64)
+    clusterdata::Vector{Matrix{Float64}}, params::ParamStruct, nframes::Int64)
 
     return connectlocalizations!(deepcopy(connectID), clusterdata, params, nframes)
 end

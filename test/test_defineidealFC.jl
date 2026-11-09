@@ -1,3 +1,6 @@
+using Test, SMLMFrameConnection, SMLMData
+include("test_helpers.jl")
+
 @testset "defineidealFC" begin
     @testset "return types" begin
         smld = make_prelabeled_smld()

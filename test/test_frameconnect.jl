@@ -1,3 +1,6 @@
+using Test, SMLMFrameConnection, SMLMData
+include("test_helpers.jl")
+
 @testset "frameconnect" begin
     @testset "return types - tuple pattern" begin
         # Use multiple molecules for proper density estimation
