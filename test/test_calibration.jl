@@ -5,15 +5,6 @@ using Random
 using SMLMSim
 using Statistics
 
-# Helper: deterministic pseudo-random from hash (no Random import needed)
-_hashval(seed::Int, i::Int) = mod(hash(seed + i * 7919), UInt64) / typemax(UInt64)
-# Box-Muller: two uniform -> one normal
-function _hashnorm(seed::Int, i::Int)
-    u1 = clamp(_hashval(seed, i), 1e-10, 1.0 - 1e-10)
-    u2 = _hashval(seed, i + 1000)
-    return sqrt(-2 * log(u1)) * cos(2π * u2)
-end
-
 @testset "Calibration" begin
     # Tracks of `nframes` consecutive localizations at fixed positions; photon counts
     # vary across tracks so the CRLB spans a range. Noise comes from SMLMSim's
@@ -242,7 +233,8 @@ end
         # Determined free fits with A < 0, refit with A = 0. That refit's own cut left out
         # pairs until fewer than 3 bins remained, and k ≈ 2 was applied from them with no
         # warning: (1) A = -1085 ± 402 nm², B = 14.8 ± 3.9, 4 bins, 2 left; (2) bins on the
-        # line 16x - 1200 nm², 3 bins, 1 or 2 left.
+        # line 16x - 1200 nm², 3 bins, 1 or 2 left. n_pairs counts the 125 pairs in the
+        # 2 bins left, not the bins of fewer than 5 pairs.
         for rows in (((100.0, 400.0, 120), (150.0, 650.0, 5), (200.0, 1400.0, 4),
                       (200.0, 6000.0, 1), (300.0, 2000.0, 4), (300.0, 10500.0, 1)),
                      ((100.0, 400.0, 120), (200.0, 1200.0, 4), (200.0, 5200.0, 1),
@@ -251,7 +243,21 @@ end
                     CalibrationConfig(clamp_k_to_one = false))
             @test !r.calibration_applied
             @test startswith(r.warning, "Refit with σ_motion = 0: Too few valid bins")
+            @test r.n_pairs == 125
         end
+        # The k = 1 refit of the clamp: bins on the line 200 + 0.2x nm² (k ≈ 0.45), the
+        # lowest of 5 pairs, one of them at 700 nm². The free fit keeps it and applies
+        # without the clamp; with the clamp, the k = 1 refit's cut drops it, and 2 bins of
+        # 200 pairs remain.
+        rows = ((100.0, 100.0, 4), (100.0, 700.0, 1), (200.0, 240.0, 200), (300.0, 260.0, 200))
+        r = SMLMFrameConnection.analyze_calibration(rows_smld(rows),
+                CalibrationConfig(clamp_k_to_one = false))
+        @test r.calibration_applied
+        @test r.k_scale ≈ sqrt(0.2) rtol = 1e-6
+        r = SMLMFrameConnection.analyze_calibration(rows_smld(rows), CalibrationConfig())
+        @test !r.calibration_applied
+        @test r.warning == "Refit with k = 1: Too few valid bins (2 < 3)"
+        @test r.n_pairs == 400
     end
 
     @testset "applied variance matches the truth when a bound binds" begin
@@ -325,7 +331,7 @@ end
         end
     end
 
-    @testset "nearly constant reported precisions do not stop the free fit" begin
+    @testset "nearly constant reported precisions: no throw, the calibration falls back" begin
         # Photon counts spread by 2e-8 (σ by 1e-8): the bins' centers differ by about
         # 1e-8 of their value, and the uncentered normal equations rounded to a nonzero
         # determinant of a singular matrix: SingularException in 2 of these 20 seeds. The
@@ -334,11 +340,9 @@ end
         for seed in 1:20
             smld = calibration_fixture(k = 1.5, σ_motion = 0.0, ntracks = 200, nframes = 2,
                                        seed = seed, photons = (100.0, 100.0 * (1 + 2e-8)))
-            σ = smld.emitters[1].σ_x
             r = SMLMFrameConnection.analyze_calibration(smld, cfg)
-            r.calibration_applied || continue
-            applied = (r.sigma_motion_nm / 1000)^2 + r.k_scale^2 * σ^2
-            @test abs(applied / (1.5^2 * σ^2) - 1) < 0.25
+            @test !r.calibration_applied
+            @test startswith(r.warning, "Motion and CRLB scale not separable")
         end
     end
 
@@ -467,44 +471,6 @@ end
         @test r.B_applied ≈ r.k_scale^2 rtol = 1e-12
     end
 
-    @testset "analyze_calibration with uniform brightness" begin
-        # All emitters have same σ -- narrow CRLB range
-        # With no motion and k=1, expect k_scale≈1
-        emitters = Emitter2DFit{Float64}[]
-        σ = 0.015
-        n_tracks = 200
-        seed = 9000
-
-        for t in 1:n_tracks
-            seed += 1
-            x = 5.0 + _hashval(seed, 1) * 40.0
-            y = 5.0 + _hashval(seed, 2) * 40.0
-            for f in 1:4
-                seed += 1
-                # Jitter consistent with σ (no extra motion)
-                dx = _hashnorm(seed, 1) * σ
-                dy = _hashnorm(seed, 2) * σ
-                push!(emitters, Emitter2DFit{Float64}(
-                    x + dx, y + dy,
-                    1000.0, 10.0, σ, σ, 0.0, 31.6, 3.16,
-                    f, 1, t, 0
-                ))
-            end
-        end
-
-        smld = make_test_smld(emitters; n_frames=4)
-        config = CalibrationConfig(clamp_k_to_one=false)
-        result = SMLMFrameConnection.analyze_calibration(smld, config)
-
-        # Should either succeed with reasonable k or fall back gracefully
-        if result.calibration_applied
-            @test result.k_scale > 0.5
-            @test result.k_scale < 2.0
-        else
-            @test result.k_scale == 1.0  # fallback default
-        end
-    end
-
     @testset "analyze_calibration fallback on insufficient data" begin
         emitters = [
             make_emitter(5.0, 5.0, 1; track_id=1),
@@ -608,29 +574,12 @@ end
     end
 
     @testset "frameconnect with calibration" begin
-        emitters = Emitter2DFit{Float64}[]
-        n_molecules = 100
-        frames_per = 4
-        seed = 5000
-
-        for m in 1:n_molecules
-            seed += 1
-            x = 5.0 + _hashval(seed, 1) * 40.0
-            y = 5.0 + _hashval(seed, 2) * 40.0
-            σ = 0.01 + _hashval(seed, 3) * 0.02
-
-            for f in 1:frames_per
-                seed += 1
-                push!(emitters, Emitter2DFit{Float64}(
-                    x + _hashnorm(seed, 1) * σ, y + _hashnorm(seed, 2) * σ,
-                    1000.0, 10.0,
-                    σ, σ, 0.0, 31.6, 3.16,
-                    f, 1, 0, 0
-                ))
-            end
-        end
-
-        smld = make_test_smld(emitters; n_frames=frames_per)
+        # 100 SMLMSim emitters seen in 4 consecutive frames, input track ids cleared.
+        fx = calibration_fixture(k = 1.0, σ_motion = 0.0, ntracks = 100, nframes = 4)
+        emitters = [Emitter2DFit{Float64}(e.x, e.y, e.photons, e.bg, e.σ_x, e.σ_y, e.σ_xy,
+                                          e.σ_photons, e.σ_bg, e.frame, e.dataset, 0, 0)
+                    for e in fx.emitters]
+        smld = make_test_smld(emitters; n_frames = 4)
 
         (combined_no_cal, info_no_cal) = frameconnect(smld)
         @test info_no_cal.calibration === nothing
@@ -721,5 +670,12 @@ end
         @test (on.k_scale, on.sigma_motion_nm, on.n_pairs) ==
               (off.k_scale, off.sigma_motion_nm, off.n_pairs)
         @test on.n_tracks_filtered == 0
+        # Data too small to calibrate (fewer than 100 pairs) hear the warning too.
+        small = calibration_fixture(k = 1.5, σ_motion = 0.0, ntracks = 20, nframes = 2)
+        r = @test_logs (:warn, r"filter_high_chi2") match_mode = :any begin
+            SMLMFrameConnection.analyze_calibration(small,
+                CalibrationConfig(filter_high_chi2 = true))
+        end
+        @test startswith(r.warning, "Too few frame-to-frame pairs")
     end
 end

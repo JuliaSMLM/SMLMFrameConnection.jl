@@ -39,7 +39,10 @@ localizations, `CRLB_var` the sum of their per-axis CRLB variances, so the inter
 
 The fit leaves out pairs whose chi² under the current fit (with the pair's full covariance,
 σ_xy included) exceeds the chi²(2) 99.7% point (mismatched pairs), corrects the truncated bin means for the variance the cut removes, and
-iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when the model holds.
+iterates to convergence. Under the model with a motion term, `k_scale` and `sigma_motion_nm` are
+unbiased within noise (simulated data, 1,000 pairs or more). With no motion, the bound
+σ_motion ≥ 0 biases `k_scale` down and `sigma_motion_nm` up: by about 1.5% and 1 nm at 1,000
+pairs, 0.5% and 0.5 nm at 10,000.
 
 # Fields
 - `sigma_motion_nm::Float64`: Applied per-localization motion std dev in nm (√(A_applied/2) × 1000)
