@@ -46,14 +46,10 @@ iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when th
 - `k_scale::Float64`: Applied CRLB scale factor (√B_applied)
 - `A::Float64`: Intercept of the free two-parameter fit (pair-difference variance 2σ_motion², in μm²); can be negative
 - `B::Float64`: Slope of the free two-parameter fit (k²). The line `A + B * bin_centers`
-  goes through `bin_observed`. With a free fit, `B < 1` while `B_applied == 1` means the
-  clamp bound. When the reported precisions fill fewer than 3 bins there is no free fit,
-  and `A`, `B`, their errors, R² and the bins are those of the applied fit, after any
-  clamp (`B == B_applied`, so `B < 1` does not show a clamp then; `warning` says there was
-  no free fit)
+  goes through `bin_observed`. `B < 1` while `B_applied == 1` means the clamp bound
 - `A_sigma::Float64`: Standard error of A
 - `B_sigma::Float64`: Standard error of B
-- `r_squared::Float64`: Weighted R² of the WLS fit (about the weighted mean); NaN for one bin
+- `r_squared::Float64`: Weighted R² of the WLS fit (about the weighted mean)
 - `mean_chi2::Float64`: Mean chi² (full pair covariance, uncalibrated CRLB) across all frame-to-frame pairs
 - `n_pairs::Int`: Number of frame-to-frame pairs used in the final fit (after the chi² cut)
 - `n_tracks_used::Int`: Number of tracks contributing pairs
@@ -63,13 +59,11 @@ iterates to convergence, so `k_scale` and `sigma_motion_nm` are unbiased when th
 - `bin_counts::Vector{Int}`: Number of pairs per bin (parallel to bin_centers/bin_observed); use to grey/drop low-statistics bins in diagnostic plots
 - `frame_shifts::Dict{Int, Vector{NTuple{2,Float64}}}`: Per-dataset (dx,dy) shifts for jitter plots
 - `calibration_applied::Bool`: Whether calibration was actually applied (false on fallback)
-- `warning::String`: Why calibration fell back (too few pairs or bins, or nothing
-  determined), or, on an applied calibration, that motion and CRLB scale were not
-  separable and which one-parameter fit was applied, or that the fit did not converge
+- `warning::String`: Why calibration fell back (too few pairs or bins, or motion and CRLB
+  scale not separable), or, on an applied calibration, that the fit did not converge
   (empty if OK)
 - `A_applied::Float64`: Intercept applied, in μm² (≥ 0): the free fit's, or a refit with a
-  bound held (A ≥ 0; B ≥ 1 with `clamp_k_to_one`), or a one-parameter fit when the free
-  fit cannot separate motion from the CRLB scale. 0 on fallback
+  bound held (A ≥ 0; B ≥ 1 with `clamp_k_to_one`). 0 on fallback
 - `B_applied::Float64`: Slope applied (k², > 0, ≥ 1 with the clamp). 1 on fallback
 """
 struct CalibrationResult
