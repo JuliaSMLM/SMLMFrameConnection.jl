@@ -198,8 +198,10 @@ mismatches; the truncated bin means are corrected for the variance the cut remov
 the fit iterates to convergence.
 
 The fit is applied only when it separates the two terms: slope positive and at least 3
-standard errors, and R² ≥ 0.1. A determined fit whose bound binds (A < 0, or B < 1 with
-`clamp_k_to_one`) is refit with that parameter held at its bound.
+standard errors, and R² ≥ 0.1. A determined fit whose bound binds (A < 0 within 3
+standard errors, or B < 1 with `clamp_k_to_one`) is refit with that parameter held at its
+bound; an intercept further below zero contradicts the model, and the calibration falls
+back.
 
 Falls back gracefully (returns `calibration_applied=false`, with the reason in `warning`)
 if fewer than 100 frame-to-frame pairs are available, the reported precisions fill fewer
@@ -352,9 +354,16 @@ function analyze_calibration(smld::BasicSMLD{T,E},
     determined || return fallback("Motion and CRLB scale not separable (free fit: B = " *
         "$(round(free.B, sigdigits=3)) ± $(round(free.B_sigma, sigdigits=3)), " *
         "R² = $(round(free.r_squared, digits=3)))", used(free))
-    # A determined free fit with A < 0 refits the scale alone: the bound σ_motion² ≥ 0
-    # binds, and keeping the slope fitted jointly with the negative intercept moves the
-    # applied variance away from the data.
+    # An intercept below zero by more than 3 standard errors contradicts the model
+    # (σ_motion² ≥ 0): no fit with the bound held describes those bins, and a refit's own
+    # cut would only leave out the pairs that disagree with it.
+    free.A < -_CAL_MIN_SLOPE_SIGNIF * free.A_sigma && return fallback(
+        "Motion term significantly negative (free fit: A = " *
+        "$(round(free.A, sigdigits=3)) ± $(round(free.A_sigma, sigdigits=3)) nm²); " *
+        "the error model does not hold", used(free))
+    # A determined free fit with A < 0 within its error refits the scale alone: the bound
+    # σ_motion² ≥ 0 binds, and keeping the slope fitted jointly with the negative intercept
+    # moves the applied variance away from the data.
     if fit.A < 0
         fit, keep, conv = iter(0.0, fit.B; fixA = 0.0)
         converged &= conv
