@@ -30,13 +30,27 @@ using SMLMFrameConnection
 Input `BasicSMLD` must contain `Emitter2DFit` emitters with:
 
 **Required:**
-- `x`, `y`: Position coordinates (microns)
-- `σ_x`, `σ_y`: Position uncertainties (microns) - must be > 0 for MLE weighting
-- `frame`: Frame number (1-based)
+- `x`, `y`: Position coordinates (microns), finite
+- `σ_x`, `σ_y`: Position uncertainties (microns), finite and > 0
+- `σ_xy`: Position covariance (μm²); the covariance must be positive definite, `|σ_xy| < σ_x σ_y`
+- `frame`: Frame number; for `frameconnect`, at least 1, and `smld.n_frames` is at least the largest frame, or 0 (unknown)
 
 **Optional:**
 - `photons`, `bg`: Photometry (summed in output)
 - `dataset`: Dataset identifier (default: 1)
+
+`frameconnect` refuses input that breaks these with an `ArgumentError` naming the
+localization and field; `combinelocalizations` checks the same except the frame rules (it
+only groups by track and takes each track's earliest frame). Localizations that carry `z`
+(3D) are refused the same way by both; frame connection is 2D only.
+
+Localizations may come in any order (for example SMLMSim's output, grouped by emitter):
+`frameconnect` works on a copy sorted by every field, so the result is the same for any
+input order, and `info.connected` keeps the caller's order.
+
+`combinelocalizations` combines localizations that share a `track_id` within a dataset.
+`track_id` 0 means unlinked: each such localization passes through on its own, as does a
+track of one localization.
 
 ## Algorithm Overview
 

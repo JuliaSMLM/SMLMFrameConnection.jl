@@ -1,3 +1,6 @@
+using Test, SMLMFrameConnection, SMLMData
+include("test_helpers.jl")
+
 @testset "Types" begin
     @testset "FrameConnectInfo" begin
         # Create minimal test data

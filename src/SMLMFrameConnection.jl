@@ -7,7 +7,6 @@ using NearestNeighbors
 using Optim
 using StatsBase
 using Statistics
-using LinearAlgebra
 
 export frameconnect, defineidealFC, combinelocalizations
 export FrameConnectConfig, FrameConnectInfo

@@ -1,3 +1,6 @@
+using Test, SMLMFrameConnection, SMLMData
+include("test_helpers.jl")
+
 @testset "combinelocalizations" begin
     @testset "single localization per cluster" begin
         # Each emitter has unique track_id - nothing to combine

@@ -39,6 +39,9 @@ For complete SMLM workflows (detection + fitting + frame-connection + rendering)
 | `max_frame_gap` | 5 | Maximum frame gap for temporal adjacency |
 | `max_neighbors` | 2 | Maximum nearest-neighbors for precluster membership |
 | `track_length` | `nothing` | Inclusive `(min, max)` range on localizations per track; tracks outside it are dropped (`nothing` disables). `info.n_filtered` reports the count dropped |
+| `calibration` | `nothing` | `CalibrationConfig()` fits the CRLB scale `k` and a motion term `σ_motion` from consecutive localizations in tracks and applies `Σ = σ_motion² I + k² Σ_CRLB` before combining; results in `info.calibration` |
+
+**Input:** `Emitter2DFit` localizations (2D only) with finite `x`, `y`; finite `σ_x`, `σ_y` > 0; a positive-definite covariance (`|σ_xy| < σ_x σ_y`); for `frameconnect`, `frame` ≥ 1 and `n_frames` ≥ the largest frame (or 0). Other input is refused with an `ArgumentError`. Input order does not matter.
 
 ```julia
 # Keyword form (most common)
@@ -73,7 +76,7 @@ config = FrameConnectConfig(max_frame_gap=10, max_sigma_dist=3.0)
 
 ### Combination Method
 
-Connected localizations are combined using maximum likelihood estimation (MLE) weighted mean:
+Connected localizations are combined using maximum likelihood estimation (MLE) weighted mean with the full 2×2 covariance (per axis, without correlation):
 - Position: `x_combined = Σ(x/σ²) / Σ(1/σ²)` (inverse-variance weighted)
 - Uncertainty: `σ_combined = √(1/Σ(1/σ²))` ≈ `σ_individual / √n`
 - Photons: summed across connected localizations
@@ -121,7 +124,7 @@ println("$(info.n_input) → $(info.n_combined) localizations in $(info.elapsed_
 ```julia
 smld_combined = combinelocalizations(smld)
 ```
-Combines emitters with the same `track_id`. Use when you have pre-labeled data.
+Combines emitters with the same `track_id` within a dataset. `track_id` 0 (unlinked) localizations pass through on their own. Use when you have pre-labeled data.
 
 ### defineidealFC
 ```julia

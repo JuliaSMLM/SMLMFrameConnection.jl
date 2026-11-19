@@ -1,6 +1,6 @@
 """
     clusterdurations, nobservations = 
-        computeclusterinfo(clusterdata::Vector{Matrix{Float32}})
+        computeclusterinfo(clusterdata::Vector{Matrix{Float64}})
 
 Compute the durations of and number of member localizations in clusters.
 
@@ -8,7 +8,7 @@ Compute the durations of and number of member localizations in clusters.
 This method computes the duration of each cluster and the number of
 localizations in each cluster present in the input `clusterdata`.
 """
-function computeclusterinfo(clusterdata::Vector{Matrix{Float32}})
+function computeclusterinfo(clusterdata::Vector{Matrix{Float64}})
     # Compute some quantities needed from each of the preclusters.
     nclusters = size(clusterdata)[1]
     clusterdurations = ones(nclusters)

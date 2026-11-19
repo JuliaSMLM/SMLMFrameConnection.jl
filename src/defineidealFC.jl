@@ -112,6 +112,7 @@ connected across datasets.
 """
 function defineidealFC(smld::BasicSMLD{T,E};
                        max_frame_gap::Int = 5) where {T, E<:SMLMData.AbstractEmitter}
+    _check_2d(smld, "defineidealFC")
     emitters = smld.emitters
 
     # Initialize connectID from track_id

@@ -14,3 +14,4 @@ SMLMFrameConnection = {path = ".."}
 
 [compat]
 SMLMData = "0.7"
+SMLMSim = "0.7"

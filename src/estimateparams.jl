@@ -5,7 +5,7 @@ using Statistics
 """
     k_on, k_off, k_bleach, p_miss, nemitters =
         estimateparams(smld::BasicSMLD{T,E},
-                       clusterdata::Vector{Matrix{Float32}}) where {T, E<:SMLMData.AbstractEmitter}
+                       clusterdata::Vector{Matrix{Float64}}) where {T, E<:SMLMData.AbstractEmitter}
 
 Estimate rate parameters from the clusters in `smld` and `clusterdata`.
 
@@ -23,7 +23,7 @@ Front. Bioinform., 20 October 2021
 https://doi.org/10.3389/fbinf.2021.724325
 """
 function estimateparams(smld::BasicSMLD{T,E},
-    clusterdata::Vector{Matrix{Float32}}) where {T, E<:SMLMData.AbstractEmitter}
+    clusterdata::Vector{Matrix{Float64}}) where {T, E<:SMLMData.AbstractEmitter}
 
     # Extract frame numbers from emitters
     framenum = [e.frame for e in smld.emitters]
@@ -40,9 +40,10 @@ function estimateparams(smld::BasicSMLD{T,E},
 
     # Compute other parameters by fitting the observed number of localizations
     # over time (see citation for description of this math).
+    # `counts` is in increasing frame order, so pair it with the sorted frame list.
     nlocperframe = counts(framenum)
     nlocperframe = nlocperframe[nlocperframe.!=0]
-    frames = convert(Array{Float64}, unique(framenum))
+    frames = convert(Array{Float64}, sort(unique(framenum)))
     nloccumulative = cumsum(nlocperframe)
     k_off = nclusters / nloccumulative[end]
     k_bleach = maximum([10^-5 k_offpbleach - k_off])
